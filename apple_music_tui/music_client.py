@@ -7,12 +7,15 @@ from typing import Literal
 class MusicClient:
     """Async interface to Apple Music via osascript."""
 
+    _DELIM = "|||"
+
     _GET_STATE_SCRIPT = """\
 tell application "Music"
+    set d to "|||"
     try
         set pState to player state as string
     on error
-        return "stopped||0|0|0|||0|off|off"
+        return "stopped" & d & "" & d & "" & d & "" & d & "0" & d & "0" & d & "50" & d & "off" & d & "off"
     end try
     try
         set pPos to player position
@@ -50,7 +53,7 @@ tell application "Music"
     on error
         set rep to "off"
     end try
-    return pState & "|" & tName & "|" & tArtist & "|" & tAlbum & "|" & (pPos as string) & "|" & (tDur as string) & "|" & (sVol as string) & "|" & shufStr & "|" & rep
+    return pState & d & tName & d & tArtist & d & tAlbum & d & (pPos as string) & d & (tDur as string) & d & (sVol as string) & d & shufStr & d & rep
 end tell"""
 
     async def _run(self, script: str) -> str | None:
@@ -82,7 +85,7 @@ end tell"""
                 "shuffle": False,
                 "repeat": "off",
             }
-        parts = raw.split("|")
+        parts = raw.split(self._DELIM)
         if len(parts) < 9:
             parts.extend([""] * (9 - len(parts)))
 

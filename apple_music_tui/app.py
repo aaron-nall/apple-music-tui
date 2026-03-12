@@ -4,7 +4,8 @@ import time
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Center, Vertical
+from textual.containers import Vertical
+from textual.widgets import Button
 
 from apple_music_tui.music_client import MusicClient
 from apple_music_tui.widgets.controls import Controls, VolumeBar
@@ -44,6 +45,7 @@ class AppleMusicApp(App):
         self.client = MusicClient()
         self._last_poll: float = 0
         self._last_state: dict = {}
+        self._polling: bool = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-container"):
@@ -52,28 +54,35 @@ class AppleMusicApp(App):
         yield StatusBar()
 
     def on_mount(self) -> None:
+        self.call_later(self._poll_state)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
 
     async def _poll_state(self) -> None:
-        state = await self.client.get_state()
-        self._last_state = state
-        self._last_poll = time.monotonic()
+        if self._polling:
+            return
+        self._polling = True
+        try:
+            state = await self.client.get_state()
+            self._last_state = state
+            self._last_poll = time.monotonic()
 
-        np = self.query_one(NowPlaying)
-        np.running = state["running"]
-        np.track = state["track"]
-        np.artist = state["artist"]
-        np.album = state["album"]
-        np.position = state["position"]
-        np.duration = state["duration"]
-        np.state = state["state"]
+            np = self.query_one(NowPlaying)
+            np.running = state["running"]
+            np.track = state["track"]
+            np.artist = state["artist"]
+            np.album = state["album"]
+            np.position = state["position"]
+            np.duration = state["duration"]
+            np.state = state["state"]
 
-        ctrl = self.query_one(Controls)
-        ctrl.playing = state["state"] == "playing"
-        ctrl.shuffle = state["shuffle"]
-        ctrl.repeat_mode = state["repeat"]
-        ctrl.volume = state["volume"]
+            ctrl = self.query_one(Controls)
+            ctrl.playing = state["state"] == "playing"
+            ctrl.shuffle = state["shuffle"]
+            ctrl.repeat_mode = state["repeat"]
+            ctrl.volume = state["volume"]
+        finally:
+            self._polling = False
 
     def _interpolate_position(self) -> None:
         if not self._last_state:
@@ -129,7 +138,7 @@ class AppleMusicApp(App):
         )
         self.notify(help_text, title="Help", timeout=8)
 
-    async def on_button_pressed(self, event) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         actions = {
             "btn-play": "play_pause",

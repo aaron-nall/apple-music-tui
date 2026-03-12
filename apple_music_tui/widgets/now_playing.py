@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.reactive import reactive
+from textual.events import Click
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label, ProgressBar
 
@@ -115,12 +116,17 @@ class NowPlaying(Widget):
             self.query_one("#time-display", Label).update("")
             self.query_one("#progress-bar", ProgressBar).update(progress=0)
 
-    def on_click(self, event) -> None:
-        """Click-to-seek on the progress bar area."""
+    def on_click(self, event: Click) -> None:
+        """Click-to-seek on the progress bar area only."""
         bar = self.query_one("#progress-bar", ProgressBar)
         bar_region = bar.region
         if bar_region and self.duration > 0:
+            # Only respond to clicks within the progress bar's region
+            if not (bar_region.y <= event.screen_y < bar_region.y + bar_region.height):
+                return
             rel_x = event.screen_x - bar_region.x
+            if not (0 <= rel_x < bar_region.width):
+                return
             fraction = max(0.0, min(1.0, rel_x / max(bar_region.width, 1)))
             seek_to = fraction * self.duration
             self.post_message(self.SeekRequest(seek_to))

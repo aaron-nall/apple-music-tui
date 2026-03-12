@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
@@ -37,7 +38,10 @@ class VolumeBar(Widget):
     """
 
     volume: reactive[int] = reactive(50)
-    _pre_mute_volume: int = 50
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pre_mute_volume: int = 50
 
     def compose(self) -> ComposeResult:
         yield Label("\U0001f50a ", id="vol-icon")
@@ -53,7 +57,7 @@ class VolumeBar(Widget):
             self.query_one("#vol-num", Label).update(str(self.volume))
             icon = "\U0001f507 " if self.volume == 0 else "\U0001f50a "
             self.query_one("#vol-icon", Label).update(icon)
-        except Exception:
+        except NoMatches:
             pass
 
     def on_click(self, event: Click) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label
@@ -27,5 +28,5 @@ class StatusBar(Widget):
     def watch_status_text(self) -> None:
         try:
             self.query_one("#status-label", Label).update(self.status_text)
-        except Exception:
+        except NoMatches:
             pass
