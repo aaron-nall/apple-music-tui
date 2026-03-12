@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "apple-music-tui"
+version = "0.1.0"
+description = "A minimal TUI for controlling Apple Music via osascript"
+authors = []
+readme = "README.md"
+packages = [{include = "apple_music_tui"}]
+
+[tool.poetry.scripts]
+apple-music-tui = "apple_music_tui.main:main"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+textual = "^1.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
