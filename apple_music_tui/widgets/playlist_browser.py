@@ -46,6 +46,7 @@ class PlaylistBrowser(Widget):
         self._current_track: str | None = None
         # Each entry: {"type": "playlist"|"track", "name": str, "track_index": int}
         self._flat_items: list[dict] = []
+        self._highlighted_idx: int | None = None  # index of the currently highlighted track item
 
     def compose(self) -> ComposeResult:
         yield ListView()
@@ -77,6 +78,7 @@ class PlaylistBrowser(Widget):
         lv = self.query_one(ListView)
         lv.clear()
         self._flat_items = []
+        self._highlighted_idx = None  # items are recreated; reset so _update_track_highlight re-applies
         expanded_playlist_item: ListItem | None = None
 
         for pl_name in self._playlist_names:
@@ -100,13 +102,28 @@ class PlaylistBrowser(Widget):
             self.call_after_refresh(lv.scroll_to, 0, pl_row, animate=False)
 
     def _update_track_highlight(self) -> None:
+        # Find the index of the track that should be highlighted.
+        new_idx: int | None = None
+        for i, meta in enumerate(self._flat_items):
+            if meta["type"] == "track" and meta["name"] == self._current_track:
+                new_idx = i
+                break
+
+        if new_idx == self._highlighted_idx:
+            return  # nothing changed — skip all DOM work
+
         lv = self.query_one(ListView)
         items = list(lv.children)
-        for item, meta in zip(items, self._flat_items):
-            if meta["type"] == "track" and meta["name"] == self._current_track:
-                item.add_class("playing-track")
-            else:
-                item.remove_class("playing-track")
+
+        # Remove highlight from the previously highlighted item (O(1) DOM update).
+        if self._highlighted_idx is not None and self._highlighted_idx < len(items):
+            items[self._highlighted_idx].remove_class("playing-track")
+
+        # Apply highlight to the new item (O(1) DOM update).
+        if new_idx is not None and new_idx < len(items):
+            items[new_idx].add_class("playing-track")
+
+        self._highlighted_idx = new_idx
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         lv = self.query_one(ListView)
