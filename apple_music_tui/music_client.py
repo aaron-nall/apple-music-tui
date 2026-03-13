@@ -53,7 +53,12 @@ tell application "Music"
     on error
         set rep to "off"
     end try
-    return pState & d & tName & d & tArtist & d & tAlbum & d & (pPos as string) & d & (tDur as string) & d & (sVol as string) & d & shufStr & d & rep
+    try
+        set plName to name of current playlist
+    on error
+        set plName to ""
+    end try
+    return pState & d & tName & d & tArtist & d & tAlbum & d & (pPos as string) & d & (tDur as string) & d & (sVol as string) & d & shufStr & d & rep & d & plName
 end tell"""
 
     async def _run(self, script: str) -> str | None:
@@ -84,10 +89,11 @@ end tell"""
                 "volume": 50,
                 "shuffle": False,
                 "repeat": "off",
+                "current_playlist": "",
             }
         parts = raw.split(self._DELIM)
-        if len(parts) < 9:
-            parts.extend([""] * (9 - len(parts)))
+        if len(parts) < 10:
+            parts.extend([""] * (10 - len(parts)))
 
         state_str = parts[0].strip().lower()
         # Map AppleScript state strings
@@ -129,6 +135,7 @@ end tell"""
             "volume": to_int(parts[6]),
             "shuffle": parts[7].strip().lower() == "on",
             "repeat": repeat_mode,
+            "current_playlist": parts[9].strip(),
         }
 
     async def play_pause(self) -> None:
@@ -175,5 +182,31 @@ end tell"""
 tell application "Music"
     set matchedPL to first playlist whose name is "{escaped}"
     play matchedPL
+end tell"""
+        await self._run(script)
+
+    async def get_playlist_tracks(self, name: str) -> list[str]:
+        escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+        script = f"""\
+tell application "Music"
+    set d to "|||"
+    set output to ""
+    set matchedPL to first playlist whose name is "{escaped}"
+    repeat with t in (every track of matchedPL)
+        set output to output & (name of t as string) & d
+    end repeat
+    return output
+end tell"""
+        raw = await self._run(script)
+        if not raw:
+            return []
+        return [t.strip() for t in raw.split(self._DELIM) if t.strip()]
+
+    async def play_playlist_track(self, playlist_name: str, track_index: int) -> None:
+        escaped = playlist_name.replace("\\", "\\\\").replace('"', '\\"')
+        script = f"""\
+tell application "Music"
+    set matchedPL to first playlist whose name is "{escaped}"
+    play (track {track_index} of matchedPL)
 end tell"""
         await self._run(script)

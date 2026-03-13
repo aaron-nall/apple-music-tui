@@ -51,6 +51,7 @@ class AppleMusicApp(App):
         self._last_poll: float = 0
         self._last_state: dict = {}
         self._polling: bool = False
+        self._last_known_playlist: str = ""  # tracks last auto-expanded playlist
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-container"):
@@ -94,6 +95,16 @@ class AppleMusicApp(App):
             ctrl.shuffle = state["shuffle"]
             ctrl.repeat_mode = state["repeat"]
             ctrl.volume = state["volume"]
+
+            browser = self.query_one(PlaylistBrowser)
+            browser.set_current_track(state["track"])
+
+            # Auto-expand if Music is playing a playlist we don't have expanded yet
+            current_pl = state.get("current_playlist", "")
+            if current_pl and current_pl != self._last_known_playlist:
+                self._last_known_playlist = current_pl
+                tracks = await self.client.get_playlist_tracks(current_pl)
+                browser.expand_playlist(current_pl, tracks)
         finally:
             self._polling = False
 
@@ -116,7 +127,16 @@ class AppleMusicApp(App):
     async def on_playlist_browser_playlist_selected(
         self, message: PlaylistBrowser.PlaylistSelected
     ) -> None:
-        await self.client.play_playlist(message.name)
+        name = message.name
+        await self.client.play_playlist(name)
+        tracks = await self.client.get_playlist_tracks(name)
+        self._last_known_playlist = name
+        self.query_one(PlaylistBrowser).expand_playlist(name, tracks)
+
+    async def on_playlist_browser_track_selected(
+        self, message: PlaylistBrowser.TrackSelected
+    ) -> None:
+        await self.client.play_playlist_track(message.playlist, message.track_index)
 
     async def action_play_pause(self) -> None:
         await self.client.play_pause()
