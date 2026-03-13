@@ -82,6 +82,7 @@ class NowPlaying(Widget):
     }
     NowPlaying ScrollingLabel {
         width: 1fr;
+        margin-right: 2;
     }
     NowPlaying #artist-name {
         width: auto;
