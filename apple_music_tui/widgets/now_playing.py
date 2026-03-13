@@ -5,6 +5,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.events import Click, Resize
+from textual.geometry import Size
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -55,6 +56,9 @@ class ScrollingLabel(Widget):
         self._offset = (self._offset + 1) % len(full)
         self.refresh()
 
+    def get_content_width(self, container: Size, viewport: Size) -> int:
+        return cell_len(self.text)
+
     def render(self) -> Text:
         w = self.size.width
         if not self.text or w <= 0:
@@ -93,7 +97,13 @@ class NowPlaying(Widget):
         color: $text-muted;
     }
     NowPlaying #album-name {
+        width: auto;
+        max-width: 67%;
+        margin-right: 0;
         color: $text-muted;
+    }
+    NowPlaying #album-spacer {
+        width: 1fr;
     }
     NowPlaying #time-display {
         width: auto;
@@ -127,6 +137,7 @@ class NowPlaying(Widget):
             yield ScrollingLabel(id="artist-name")
         with Horizontal(id="album-row"):
             yield ScrollingLabel(id="album-name")
+            yield Label("", id="album-spacer")
             yield Label("", id="time-display")
         yield ProgressBar(id="progress-bar", total=100, show_eta=False, show_percentage=False)
 
