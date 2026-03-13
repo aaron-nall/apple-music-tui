@@ -159,7 +159,7 @@ end tell"""
 tell application "Music"
     set d to "|||"
     set output to ""
-    repeat with pl in (every user playlist)
+    repeat with pl in (every playlist whose special kind is none)
         set output to output & (name of pl as string) & d
     end repeat
     return output
