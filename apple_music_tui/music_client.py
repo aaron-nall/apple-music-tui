@@ -72,7 +72,7 @@ end tell"""
             if proc.returncode != 0:
                 return None
             return stdout.decode().strip()
-        except Exception:
+        except (asyncio.TimeoutError, OSError, UnicodeDecodeError):
             return None
 
     async def get_state(self) -> dict:
