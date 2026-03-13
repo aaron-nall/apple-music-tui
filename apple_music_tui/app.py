@@ -7,7 +7,9 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Button
 
+from apple_music_tui.config import load_config
 from apple_music_tui.music_client import MusicClient
+from apple_music_tui.themes import CUSTOM_THEMES
 from apple_music_tui.widgets.controls import Controls, VolumeBar
 from apple_music_tui.widgets.now_playing import NowPlaying
 from apple_music_tui.widgets.status_bar import StatusBar
@@ -34,6 +36,7 @@ class AppleMusicApp(App):
         Binding("left,h", "previous_track", "Previous"),
         Binding("s", "toggle_shuffle", "Shuffle"),
         Binding("r", "cycle_repeat", "Repeat"),
+        Binding("t", "cycle_theme", "Theme"),
         Binding("plus,equal", "volume_up", "Vol+"),
         Binding("minus", "volume_down", "Vol-"),
         Binding("q", "quit", "Quit"),
@@ -41,6 +44,7 @@ class AppleMusicApp(App):
     ]
 
     def __init__(self) -> None:
+        self._config = load_config()
         super().__init__()
         self.client = MusicClient()
         self._last_poll: float = 0
@@ -54,6 +58,11 @@ class AppleMusicApp(App):
         yield StatusBar()
 
     def on_mount(self) -> None:
+        for t in CUSTOM_THEMES:
+            self.register_theme(t)
+        saved = self._config.theme
+        if saved in self.available_themes:
+            self.theme = saved
         self.call_later(self._poll_state)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
@@ -114,6 +123,14 @@ class AppleMusicApp(App):
         next_mode = {"off": "all", "all": "one", "one": "off"}[current]
         await self.client.set_repeat(next_mode)
 
+    def action_cycle_theme(self) -> None:
+        themes = list(self.available_themes.keys())
+        current = themes.index(self.theme) if self.theme in themes else -1
+        self.theme = themes[(current + 1) % len(themes)]
+        self.notify(f"Theme: {self.theme}", timeout=2)
+        self._config.theme = self.theme
+        self._config.save()
+
     async def action_volume_up(self) -> None:
         current = self._last_state.get("volume", 50)
         await self.client.set_volume(min(100, current + 5))
@@ -131,6 +148,7 @@ class AppleMusicApp(App):
             "  [b]\u2190[/b] / [b]h[/b]   Previous track\n"
             "  [b]s[/b]         Toggle shuffle\n"
             "  [b]r[/b]         Cycle repeat (off \u2192 all \u2192 one)\n"
+            "  [b]t[/b]         Cycle theme\n"
             "  [b]+[/b] / [b]=[/b]   Volume up 5\n"
             "  [b]-[/b]         Volume down 5\n"
             "  [b]?[/b]         Show this help\n"
