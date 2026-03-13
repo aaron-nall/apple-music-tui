@@ -67,6 +67,7 @@ class AppleMusicApp(App):
             self.theme = saved
         self.call_later(self._poll_state)
         self.call_later(self._load_playlists)
+        self.call_later(self.screen.set_focus, None)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
 
