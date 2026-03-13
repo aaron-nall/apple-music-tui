@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, ClassVar, Tuple, Type
 
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, JsonConfigSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
 
 CONFIG_DIR = Path.home() / ".config" / "apple-music-tui"
@@ -37,5 +39,5 @@ class AppConfig(BaseSettings):
 def load_config() -> AppConfig:
     try:
         return AppConfig()
-    except Exception:
+    except (json.JSONDecodeError, ValidationError, OSError):
         return AppConfig.model_construct(theme="textual-dark")
