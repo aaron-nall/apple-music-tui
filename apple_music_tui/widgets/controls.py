@@ -13,6 +13,8 @@ from textual.widgets import Button, Label
 class VolumeBar(Widget):
     """Volume display: clickable icon (mute toggle) + clickable bar (set level) + number."""
 
+    _BAR_CHARS: int = 8  # number of block characters (█/░) in the volume bar
+
     DEFAULT_CSS = """
     VolumeBar {
         height: 1;
@@ -49,8 +51,8 @@ class VolumeBar(Widget):
         yield Label("50", id="vol-num")
 
     def watch_volume(self) -> None:
-        filled = round(self.volume / 100 * 8)
-        empty = 8 - filled
+        filled = round(self.volume / 100 * self._BAR_CHARS)
+        empty = self._BAR_CHARS - filled
         bar_str = "\u2588" * filled + "\u2591" * empty
         try:
             self.query_one("#vol-bar", Label).update(bar_str)

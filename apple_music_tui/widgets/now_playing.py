@@ -21,9 +21,9 @@ class ScrollingLabel(Widget):
     }
     """
 
-    _SEP: str = "    ·    "
-    _INTERVAL: float = 0.15   # seconds per character step
-    _INITIAL_DELAY: int = 13  # ticks (~2 s) before scrolling starts
+    _SEP: str = "    ·    "  # separator inserted between the end and start of text when looping
+    _INTERVAL: float = 0.15   # seconds per character step (lower = faster scroll)
+    _INITIAL_DELAY: int = 13  # ticks before scrolling starts (13 × 0.15 s ≈ 2 s pause)
 
     text: reactive[str] = reactive("", layout=True)
     _offset: int = 0
