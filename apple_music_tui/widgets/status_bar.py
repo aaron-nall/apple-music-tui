@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from importlib.metadata import version, PackageNotFoundError
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label
+
+try:
+    _VERSION = version("apple-music-tui")
+except PackageNotFoundError:
+    _VERSION = "dev"
 
 
 class StatusBar(Widget):
@@ -20,7 +26,10 @@ class StatusBar(Widget):
     }
     """
 
-    status_text: reactive[str] = reactive("Apple Music TUI  |  ?: help  q: quit")
+    status_text: reactive[str] = reactive("")
+
+    def on_mount(self) -> None:
+        self.status_text = f"Apple Music TUI v{_VERSION}  |  ?: help  q: quit"
 
     def compose(self) -> ComposeResult:
         yield Label(self.status_text, id="status-label")
