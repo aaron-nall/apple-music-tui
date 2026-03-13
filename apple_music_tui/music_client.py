@@ -153,3 +153,27 @@ end tell"""
     async def set_volume(self, level: int) -> None:
         level = max(0, min(100, level))
         await self._run(f'tell application "Music" to set sound volume to {level}')
+
+    async def get_playlists(self) -> list[str]:
+        script = """\
+tell application "Music"
+    set d to "|||"
+    set output to ""
+    repeat with pl in (every user playlist)
+        set output to output & (name of pl as string) & d
+    end repeat
+    return output
+end tell"""
+        raw = await self._run(script)
+        if not raw:
+            return []
+        return [p.strip() for p in raw.split(self._DELIM) if p.strip()]
+
+    async def play_playlist(self, name: str) -> None:
+        escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+        script = f"""\
+tell application "Music"
+    set matchedPL to first playlist whose name is "{escaped}"
+    play matchedPL
+end tell"""
+        await self._run(script)

@@ -12,6 +12,7 @@ from apple_music_tui.music_client import MusicClient
 from apple_music_tui.themes import CUSTOM_THEMES
 from apple_music_tui.widgets.controls import Controls, VolumeBar
 from apple_music_tui.widgets.now_playing import NowPlaying
+from apple_music_tui.widgets.playlist_browser import PlaylistBrowser
 from apple_music_tui.widgets.status_bar import StatusBar
 
 
@@ -55,6 +56,7 @@ class AppleMusicApp(App):
         with Vertical(id="main-container"):
             yield NowPlaying()
             yield Controls()
+        yield PlaylistBrowser()
         yield StatusBar()
 
     def on_mount(self) -> None:
@@ -64,6 +66,7 @@ class AppleMusicApp(App):
         if saved in self.available_themes:
             self.theme = saved
         self.call_later(self._poll_state)
+        self.call_later(self._load_playlists)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
 
@@ -104,6 +107,15 @@ class AppleMusicApp(App):
                 interpolated = min(interpolated, duration)
             np = self.query_one(NowPlaying)
             np.position = interpolated
+
+    async def _load_playlists(self) -> None:
+        names = await self.client.get_playlists()
+        self.query_one(PlaylistBrowser).set_playlists(names)
+
+    async def on_playlist_browser_playlist_selected(
+        self, message: PlaylistBrowser.PlaylistSelected
+    ) -> None:
+        await self.client.play_playlist(message.name)
 
     async def action_play_pause(self) -> None:
         await self.client.play_pause()
