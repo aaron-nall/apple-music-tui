@@ -98,6 +98,7 @@ class NowPlaying(Widget):
         color: $text-muted;
     }
     NowPlaying #progress-bar {
+        width: 1fr;
         height: 1;
         margin: 0 0;
     }
