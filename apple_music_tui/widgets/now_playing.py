@@ -48,7 +48,7 @@ class ScrollingLabel(Widget):
         self.refresh()
 
     def _tick(self) -> None:
-        w = self.size.width
+        w = self.content_size.width
         if w <= 0 or not self.text:
             return
         if cell_len(self.text) <= w:
@@ -61,7 +61,7 @@ class ScrollingLabel(Widget):
         self.refresh()
 
     def render(self) -> Text:
-        w = self.size.width
+        w = self.content_size.width
         if not self.text or w <= 0:
             return Text(self.text)
         text_w = cell_len(self.text)
@@ -102,6 +102,7 @@ class NowPlaying(Widget):
     }
     NowPlaying #album-name {
         color: $text-muted;
+        padding-left: 3;
     }
     NowPlaying #time-display {
         width: auto;
@@ -174,7 +175,7 @@ class NowPlaying(Widget):
             return
         self.query_one("#track-name", ScrollingLabel).text = f"\u266b  {self.track}"
         self.query_one("#artist-name", ScrollingLabel).text = self.artist
-        self.query_one("#album-name", ScrollingLabel).text = f"   {self.album}"
+        self.query_one("#album-name", ScrollingLabel).text = self.album
 
     def _update_time(self) -> None:
         if self.duration > 0:
