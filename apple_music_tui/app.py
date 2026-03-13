@@ -153,7 +153,7 @@ class AppleMusicApp(App):
 
     async def action_cycle_repeat(self) -> None:
         current = self._last_state.get("repeat", "off")
-        next_mode = {"off": "all", "all": "one", "one": "off"}[current]
+        next_mode = {"off": "all", "all": "one", "one": "off"}.get(current, "off")
         await self.client.set_repeat(next_mode)
 
     def action_cycle_theme(self) -> None:
