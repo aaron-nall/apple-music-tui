@@ -8,7 +8,7 @@ from textual.containers import Vertical
 from textual.widgets import Button
 
 from apple_music_tui.config import load_config
-from apple_music_tui.music_client import MusicClient
+from apple_music_tui.music_client import MusicClient, MusicState
 from apple_music_tui.themes import CUSTOM_THEMES
 from apple_music_tui.widgets.controls import Controls, VolumeBar
 from apple_music_tui.widgets.now_playing import NowPlaying
@@ -49,7 +49,7 @@ class AppleMusicApp(App):
         super().__init__()
         self.client = MusicClient()
         self._last_poll: float = 0
-        self._last_state: dict = {}
+        self._last_state: MusicState | None = None
         self._polling: bool = False
         self._last_known_playlist: str = ""  # tracks last auto-expanded playlist
 
@@ -100,7 +100,7 @@ class AppleMusicApp(App):
             browser.set_current_track(state["track"])
 
             # Auto-expand if Music is playing a playlist we don't have expanded yet
-            current_pl = state.get("current_playlist", "")
+            current_pl = state["current_playlist"]
             if current_pl and current_pl != self._last_known_playlist:
                 self._last_known_playlist = current_pl
                 tracks = await self.client.get_playlist_tracks(current_pl)
@@ -109,9 +109,9 @@ class AppleMusicApp(App):
             self._polling = False
 
     def _interpolate_position(self) -> None:
-        if not self._last_state:
+        if self._last_state is None:
             return
-        if self._last_state.get("state") == "playing":
+        if self._last_state["state"] == "playing":
             elapsed = time.monotonic() - self._last_poll
             interpolated = self._last_state["position"] + elapsed
             duration = self._last_state["duration"]
@@ -148,11 +148,11 @@ class AppleMusicApp(App):
         await self.client.previous_track()
 
     async def action_toggle_shuffle(self) -> None:
-        current = self._last_state.get("shuffle", False)
+        current = self._last_state["shuffle"] if self._last_state else False
         await self.client.set_shuffle(not current)
 
     async def action_cycle_repeat(self) -> None:
-        current = self._last_state.get("repeat", "off")
+        current = self._last_state["repeat"] if self._last_state else "off"
         next_mode = {"off": "all", "all": "one", "one": "off"}.get(current, "off")
         await self.client.set_repeat(next_mode)
 
@@ -165,11 +165,11 @@ class AppleMusicApp(App):
         self._config.save()
 
     async def action_volume_up(self) -> None:
-        current = self._last_state.get("volume", 50)
+        current = self._last_state["volume"] if self._last_state else 50
         await self.client.set_volume(min(100, current + 5))
 
     async def action_volume_down(self) -> None:
-        current = self._last_state.get("volume", 50)
+        current = self._last_state["volume"] if self._last_state else 50
         await self.client.set_volume(max(0, current - 5))
 
     def action_show_help(self) -> None:

@@ -2,9 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Literal
+from typing import Literal, TypedDict
 
 _log = logging.getLogger(__name__)
+
+
+class MusicState(TypedDict):
+    running: bool
+    state: str
+    track: str
+    artist: str
+    album: str
+    position: float
+    duration: float
+    volume: int
+    shuffle: bool
+    repeat: str
+    current_playlist: str
 
 
 class MusicClient:
@@ -80,8 +94,8 @@ end tell"""
             _log.debug("osascript failed: %s", exc)
             return None
 
-    async def get_state(self) -> dict:
-        _defaults: dict = {
+    async def get_state(self) -> MusicState:
+        _defaults: MusicState = {
             "running": False,
             "state": "stopped",
             "track": "",
