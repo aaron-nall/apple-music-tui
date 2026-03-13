@@ -93,8 +93,11 @@ class PlaylistBrowser(Widget):
 
         self._update_track_highlight()
 
-        if expanded_playlist_item is not None:
-            self.call_after_refresh(lv.scroll_to_widget, expanded_playlist_item, animate=False)
+        if self._expanded_playlist in self._playlist_names:
+            # Scroll so the playlist header sits at the top of the view.
+            # Each ListItem is 1 line tall, so the row index == the Y offset in cells.
+            pl_row = self._playlist_names.index(self._expanded_playlist)
+            self.call_after_refresh(lv.scroll_to, 0, pl_row, animate=False)
 
     def _update_track_highlight(self) -> None:
         lv = self.query_one(ListView)
