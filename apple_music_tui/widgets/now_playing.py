@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rich.cells import cell_len
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.events import Click, Resize
@@ -54,15 +55,15 @@ class ScrollingLabel(Widget):
         self._offset = (self._offset + 1) % len(full)
         self.refresh()
 
-    def render(self) -> str:
+    def render(self) -> Text:
         w = self.size.width
         if not self.text or w <= 0:
-            return self.text
+            return Text(self.text)
         if cell_len(self.text) <= w:
-            return self.text
+            return Text(self.text)
         full = self.text + self._SEP
         doubled = full * 2
-        return doubled[self._offset : self._offset + w]
+        return Text(doubled[self._offset : self._offset + w])
 
 
 class NowPlaying(Widget):
