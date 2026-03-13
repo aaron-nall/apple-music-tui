@@ -119,7 +119,7 @@ end tell"""
         repeat_raw = parts[8].strip().lower()
         if repeat_raw == "one":
             repeat_mode = "one"
-        elif repeat_raw in ("all",):
+        elif repeat_raw == "all":
             repeat_mode = "all"
         else:
             repeat_mode = "off"
