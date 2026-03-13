@@ -1,12 +1,69 @@
 from __future__ import annotations
 
+from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.events import Click
+from textual.events import Click, Resize
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label, ProgressBar
+
+
+class ScrollingLabel(Widget):
+    """A label that horizontally marquee-scrolls its text only when it overflows."""
+
+    DEFAULT_CSS = """
+    ScrollingLabel {
+        width: 1fr;
+        text-style: bold;
+        overflow: hidden hidden;
+    }
+    """
+
+    _SEP: str = "    ·    "
+    _INTERVAL: float = 0.15   # seconds per character step
+    _INITIAL_DELAY: int = 13  # ticks (~2 s) before scrolling starts
+
+    text: reactive[str] = reactive("", layout=True)
+    _offset: int = 0
+    _delay: int = 0
+
+    def on_mount(self) -> None:
+        self.set_interval(self._INTERVAL, self._tick)
+
+    def watch_text(self) -> None:
+        self._offset = 0
+        self._delay = 0
+        self.refresh()
+
+    def on_resize(self, event: Resize) -> None:
+        self._offset = 0
+        self._delay = 0
+        self.refresh()
+
+    def _tick(self) -> None:
+        w = self.size.width
+        if w <= 0 or not self.text:
+            return
+        if cell_len(self.text) <= w:
+            return  # fits — nothing to scroll
+        if self._delay < self._INITIAL_DELAY:
+            self._delay += 1
+            return
+        full = self.text + self._SEP
+        self._offset = (self._offset + 1) % len(full)
+        self.refresh()
+
+    def render(self) -> str:
+        w = self.size.width
+        if not self.text or w <= 0:
+            return self.text
+        if cell_len(self.text) <= w:
+            return self.text
+        full = self.text + self._SEP
+        doubled = full * 2
+        return doubled[self._offset : self._offset + w]
 
 
 class NowPlaying(Widget):
@@ -23,9 +80,8 @@ class NowPlaying(Widget):
     NowPlaying #album-row {
         height: 1;
     }
-    NowPlaying #track-name {
+    NowPlaying ScrollingLabel {
         width: 1fr;
-        text-style: bold;
     }
     NowPlaying #artist-name {
         width: auto;
@@ -60,7 +116,7 @@ class NowPlaying(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="track-row"):
-            yield Label("Nothing playing", id="track-name")
+            yield ScrollingLabel(id="track-name")
             yield Label("", id="artist-name")
         with Horizontal(id="album-row"):
             yield Label("", id="album-name")
@@ -92,16 +148,16 @@ class NowPlaying(Widget):
 
     def _update_display(self) -> None:
         if not self.running:
-            self.query_one("#track-name", Label).update("Apple Music is not running")
+            self.query_one("#track-name", ScrollingLabel).text = "Apple Music is not running"
             self.query_one("#artist-name", Label).update("")
             self.query_one("#album-name", Label).update("")
             return
         if not self.track:
-            self.query_one("#track-name", Label).update("\u266b  Nothing playing")
+            self.query_one("#track-name", ScrollingLabel).text = "\u266b  Nothing playing"
             self.query_one("#artist-name", Label).update("")
             self.query_one("#album-name", Label).update("")
             return
-        self.query_one("#track-name", Label).update(f"\u266b  {self.track}")
+        self.query_one("#track-name", ScrollingLabel).text = f"\u266b  {self.track}"
         self.query_one("#artist-name", Label).update(self.artist)
         self.query_one("#album-name", Label).update(f"   {self.album}")
 
