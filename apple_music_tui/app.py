@@ -180,7 +180,7 @@ class AppleMusicApp(App):
         action = actions.get(button_id)
         if action:
             await self.run_action(action)
-            event.button.blur()
+            self.screen.set_focus(None)
 
     async def on_now_playing_seek_request(self, message: NowPlaying.SeekRequest) -> None:
         await self.client.set_position(message.position)
