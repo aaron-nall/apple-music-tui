@@ -89,7 +89,6 @@ class NowPlaying(Widget):
         color: $text-muted;
     }
     NowPlaying #album-name {
-        width: 1fr;
         color: $text-muted;
     }
     NowPlaying #time-display {
@@ -119,7 +118,7 @@ class NowPlaying(Widget):
             yield ScrollingLabel(id="track-name")
             yield Label("", id="artist-name")
         with Horizontal(id="album-row"):
-            yield Label("", id="album-name")
+            yield ScrollingLabel(id="album-name")
             yield Label("", id="time-display")
         yield ProgressBar(id="progress-bar", total=100, show_eta=False, show_percentage=False)
 
@@ -150,16 +149,16 @@ class NowPlaying(Widget):
         if not self.running:
             self.query_one("#track-name", ScrollingLabel).text = "Apple Music is not running"
             self.query_one("#artist-name", Label).update("")
-            self.query_one("#album-name", Label).update("")
+            self.query_one("#album-name", ScrollingLabel).text = ""
             return
         if not self.track:
             self.query_one("#track-name", ScrollingLabel).text = "\u266b  Nothing playing"
             self.query_one("#artist-name", Label).update("")
-            self.query_one("#album-name", Label).update("")
+            self.query_one("#album-name", ScrollingLabel).text = ""
             return
         self.query_one("#track-name", ScrollingLabel).text = f"\u266b  {self.track}"
         self.query_one("#artist-name", Label).update(self.artist)
-        self.query_one("#album-name", Label).update(f"   {self.album}")
+        self.query_one("#album-name", ScrollingLabel).text = f"   {self.album}"
 
     def _update_time(self) -> None:
         if self.duration > 0:
