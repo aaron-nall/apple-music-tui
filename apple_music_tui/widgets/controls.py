@@ -118,11 +118,13 @@ class Controls(Widget):
         background: $surface-lighten-2;
     }
     Controls #btn-shuffle.active {
-        color: $accent;
+        background: $accent;
+        color: $background;
         text-style: bold;
     }
     Controls #btn-repeat.active {
-        color: $accent;
+        background: $accent;
+        color: $background;
         text-style: bold;
     }
     Controls #btn-play {
