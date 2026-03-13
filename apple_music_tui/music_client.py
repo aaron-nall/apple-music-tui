@@ -12,13 +12,14 @@ class MusicClient:
 
     _DELIM = "|||"
 
+    # Outputs one "KEY: value" pair per line so parsing is position-independent.
+    # Adding or reordering fields in the future won't silently corrupt state.
     _GET_STATE_SCRIPT = """\
 tell application "Music"
-    set d to "|||"
     try
         set pState to player state as string
     on error
-        return "stopped" & d & "" & d & "" & d & "" & d & "0" & d & "0" & d & "50" & d & "off" & d & "off"
+        return "STATE: stopped" & return & "TRACK: " & return & "ARTIST: " & return & "ALBUM: " & return & "POSITION: 0" & return & "DURATION: 0" & return & "VOLUME: 50" & return & "SHUFFLE: off" & return & "REPEAT: off" & return & "PLAYLIST: "
     end try
     try
         set pPos to player position
@@ -61,7 +62,7 @@ tell application "Music"
     on error
         set plName to ""
     end try
-    return pState & d & tName & d & tArtist & d & tAlbum & d & (pPos as string) & d & (tDur as string) & d & (sVol as string) & d & shufStr & d & rep & d & plName
+    return "STATE: " & pState & return & "TRACK: " & tName & return & "ARTIST: " & tArtist & return & "ALBUM: " & tAlbum & return & "POSITION: " & (pPos as string) & return & "DURATION: " & (tDur as string) & return & "VOLUME: " & (sVol as string) & return & "SHUFFLE: " & shufStr & return & "REPEAT: " & rep & return & "PLAYLIST: " & plName
 end tell"""
 
     async def _run(self, script: str) -> str | None:
@@ -80,33 +81,35 @@ end tell"""
             return None
 
     async def get_state(self) -> dict:
+        _defaults: dict = {
+            "running": False,
+            "state": "stopped",
+            "track": "",
+            "artist": "",
+            "album": "",
+            "position": 0.0,
+            "duration": 0.0,
+            "volume": 50,
+            "shuffle": False,
+            "repeat": "off",
+            "current_playlist": "",
+        }
         raw = await self._run(self._GET_STATE_SCRIPT)
         if not raw:
-            return {
-                "running": False,
-                "state": "stopped",
-                "track": "",
-                "artist": "",
-                "album": "",
-                "position": 0.0,
-                "duration": 0.0,
-                "volume": 50,
-                "shuffle": False,
-                "repeat": "off",
-                "current_playlist": "",
-            }
-        parts = raw.split(self._DELIM)
-        if len(parts) < 10:
-            parts.extend([""] * (10 - len(parts)))
+            return _defaults
 
-        state_str = parts[0].strip().lower()
-        # Map AppleScript state strings
-        if "play" in state_str:
-            state = "playing"
-        elif "pause" in state_str:
-            state = "paused"
-        else:
-            state = "stopped"
+        # Parse "KEY: value" lines — order-independent, tolerant of new fields.
+        # partition(": ") splits only on the first occurrence, so values that
+        # contain ": " (e.g. "Act 1: The Beginning") are preserved intact.
+        data: dict[str, str] = {}
+        for line in raw.splitlines():
+            key, sep, value = line.partition(": ")
+            if sep:
+                data[key.strip()] = value
+
+        if not data:
+            _log.debug("get_state: failed to parse output: %r", raw)
+            return _defaults
 
         def to_float(s: str) -> float:
             try:
@@ -120,7 +123,15 @@ end tell"""
             except (ValueError, AttributeError):
                 return 0
 
-        repeat_raw = parts[8].strip().lower()
+        state_str = data.get("STATE", "stopped").lower()
+        if "play" in state_str:
+            state = "playing"
+        elif "pause" in state_str:
+            state = "paused"
+        else:
+            state = "stopped"
+
+        repeat_raw = data.get("REPEAT", "off").strip().lower()
         if repeat_raw == "one":
             repeat_mode = "one"
         elif repeat_raw == "all":
@@ -131,15 +142,15 @@ end tell"""
         return {
             "running": True,
             "state": state,
-            "track": parts[1].strip(),
-            "artist": parts[2].strip(),
-            "album": parts[3].strip(),
-            "position": to_float(parts[4]),
-            "duration": to_float(parts[5]),
-            "volume": to_int(parts[6]),
-            "shuffle": parts[7].strip().lower() == "on",
+            "track": data.get("TRACK", ""),
+            "artist": data.get("ARTIST", ""),
+            "album": data.get("ALBUM", ""),
+            "position": to_float(data.get("POSITION", "0")),
+            "duration": to_float(data.get("DURATION", "0")),
+            "volume": to_int(data.get("VOLUME", "50")),
+            "shuffle": data.get("SHUFFLE", "off").strip().lower() == "on",
             "repeat": repeat_mode,
-            "current_playlist": parts[9].strip(),
+            "current_playlist": data.get("PLAYLIST", ""),
         }
 
     async def play_pause(self) -> None:
