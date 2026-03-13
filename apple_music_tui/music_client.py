@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Literal
+
+_log = logging.getLogger(__name__)
 
 
 class MusicClient:
@@ -72,7 +75,8 @@ end tell"""
             if proc.returncode != 0:
                 return None
             return stdout.decode().strip()
-        except (asyncio.TimeoutError, OSError, UnicodeDecodeError):
+        except (asyncio.TimeoutError, OSError, UnicodeDecodeError) as exc:
+            _log.debug("osascript failed: %s", exc)
             return None
 
     async def get_state(self) -> dict:
