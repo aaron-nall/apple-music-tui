@@ -203,7 +203,7 @@ end tell"""
         raw = await self._run(script)
         if not raw:
             return []
-        return [p.strip() for p in raw.split(self._DELIM) if p.strip()]
+        return [p.strip() for p in raw.split(self._DELIM) if p.strip() and p.strip() != "Music Videos" ]
 
     async def play_playlist(self, name: str) -> None:
         escaped = name.replace("\\", "\\\\").replace('"', '\\"')
