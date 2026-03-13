@@ -16,7 +16,6 @@ class ScrollingLabel(Widget):
     DEFAULT_CSS = """
     ScrollingLabel {
         width: 1fr;
-        text-style: bold;
         overflow: hidden hidden;
     }
     """
@@ -84,9 +83,12 @@ class NowPlaying(Widget):
         width: 1fr;
         margin-right: 2;
     }
+    NowPlaying #track-name {
+        text-style: bold;
+    }
     NowPlaying #artist-name {
-        width: auto;
-        text-align: right;
+        width: 33%;
+        margin-right: 0;
         color: $text-muted;
     }
     NowPlaying #album-name {
@@ -121,7 +123,7 @@ class NowPlaying(Widget):
     def compose(self) -> ComposeResult:
         with Horizontal(id="track-row"):
             yield ScrollingLabel(id="track-name")
-            yield Label("", id="artist-name")
+            yield ScrollingLabel(id="artist-name")
         with Horizontal(id="album-row"):
             yield ScrollingLabel(id="album-name")
             yield Label("", id="time-display")
@@ -153,16 +155,16 @@ class NowPlaying(Widget):
     def _update_display(self) -> None:
         if not self.running:
             self.query_one("#track-name", ScrollingLabel).text = "Apple Music is not running"
-            self.query_one("#artist-name", Label).update("")
+            self.query_one("#artist-name", ScrollingLabel).text = ""
             self.query_one("#album-name", ScrollingLabel).text = ""
             return
         if not self.track:
             self.query_one("#track-name", ScrollingLabel).text = "\u266b  Nothing playing"
-            self.query_one("#artist-name", Label).update("")
+            self.query_one("#artist-name", ScrollingLabel).text = ""
             self.query_one("#album-name", ScrollingLabel).text = ""
             return
         self.query_one("#track-name", ScrollingLabel).text = f"\u266b  {self.track}"
-        self.query_one("#artist-name", Label).update(self.artist)
+        self.query_one("#artist-name", ScrollingLabel).text = self.artist
         self.query_one("#album-name", ScrollingLabel).text = f"   {self.album}"
 
     def _update_time(self) -> None:
