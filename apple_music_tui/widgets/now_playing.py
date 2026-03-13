@@ -102,6 +102,9 @@ class NowPlaying(Widget):
         height: 1;
         margin: 0 0;
     }
+    NowPlaying #progress-bar > Bar {
+        width: 1fr;
+    }
     NowPlaying #progress-bar > .bar--bar {
         color: $accent;
     }
