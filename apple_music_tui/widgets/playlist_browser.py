@@ -77,7 +77,7 @@ class PlaylistBrowser(Widget):
         lv = self.query_one(ListView)
         lv.clear()
         self._flat_items = []
-        first_track_item: ListItem | None = None
+        expanded_playlist_item: ListItem | None = None
 
         for pl_name in self._playlist_names:
             item = ListItem(Label(pl_name))
@@ -85,17 +85,16 @@ class PlaylistBrowser(Widget):
             self._flat_items.append({"type": "playlist", "name": pl_name})
 
             if pl_name == self._expanded_playlist:
+                expanded_playlist_item = item
                 for i, track in enumerate(self._track_names, start=1):
                     track_item = ListItem(Label(f"  {track}"))
                     lv.append(track_item)
                     self._flat_items.append({"type": "track", "name": track, "track_index": i})
-                    if first_track_item is None:
-                        first_track_item = track_item
 
         self._update_track_highlight()
 
-        if first_track_item is not None:
-            self.call_after_refresh(lv.scroll_to_widget, first_track_item, animate=False)
+        if expanded_playlist_item is not None:
+            self.call_after_refresh(lv.scroll_to_widget, expanded_playlist_item, animate=False)
 
     def _update_track_highlight(self) -> None:
         lv = self.query_one(ListView)
