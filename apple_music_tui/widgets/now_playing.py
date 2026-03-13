@@ -28,6 +28,11 @@ class ScrollingLabel(Widget):
     text: reactive[str] = reactive("", layout=True)
     _offset: int = 0
     _delay: int = 0
+    _right_align: bool = False
+
+    def __init__(self, *args, right_align: bool = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._right_align = right_align
 
     def on_mount(self) -> None:
         self.set_interval(self._INTERVAL, self._tick)
@@ -59,7 +64,10 @@ class ScrollingLabel(Widget):
         w = self.size.width
         if not self.text or w <= 0:
             return Text(self.text)
-        if cell_len(self.text) <= w:
+        text_w = cell_len(self.text)
+        if text_w <= w:
+            if self._right_align:
+                return Text(" " * (w - text_w) + self.text)
             return Text(self.text)
         full = self.text + self._SEP
         doubled = full * 2
@@ -124,7 +132,7 @@ class NowPlaying(Widget):
     def compose(self) -> ComposeResult:
         with Horizontal(id="track-row"):
             yield ScrollingLabel(id="track-name")
-            yield ScrollingLabel(id="artist-name")
+            yield ScrollingLabel(id="artist-name", right_align=True)
         with Horizontal(id="album-row"):
             yield ScrollingLabel(id="album-name")
             yield Label("", id="time-display")
