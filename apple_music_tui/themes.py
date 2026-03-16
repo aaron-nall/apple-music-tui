@@ -15,6 +15,12 @@ amber_terminal = Theme(
     success="#88DD00",
     luminosity_spread=0.1,
     text_alpha=0.95,
+    variables={
+        "scrollbar-background": "#1F0D00",
+        "scrollbar-background-hover": "#1F0D00",
+        "scrollbar-background-active": "#1F0D00",
+        "scrollbar-corner-color": "#1F0D00",
+    },
 )
 
 green_terminal = Theme(
@@ -32,6 +38,12 @@ green_terminal = Theme(
     success="#00FFAA",
     luminosity_spread=0.1,
     text_alpha=0.95,
+    variables={
+        "scrollbar-background": "#001A00",
+        "scrollbar-background-hover": "#001A00",
+        "scrollbar-background-active": "#001A00",
+        "scrollbar-corner-color": "#001A00",
+    },
 )
 
 CUSTOM_THEMES = [amber_terminal, green_terminal]
