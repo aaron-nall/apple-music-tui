@@ -46,7 +46,7 @@ class VolumeBar(Widget):
         self._pre_mute_volume: int = 50
 
     def compose(self) -> ComposeResult:
-        yield Label("\U0001f50a ", id="vol-icon")
+        yield Label("\u266a ", id="vol-icon")
         yield Label("", id="vol-bar")
         yield Label("50", id="vol-num")
 
@@ -57,7 +57,7 @@ class VolumeBar(Widget):
         try:
             self.query_one("#vol-bar", Label).update(bar_str)
             self.query_one("#vol-num", Label).update(str(self.volume))
-            icon = "\U0001f507 " if self.volume == 0 else "\U0001f50a "
+            icon = "\u2715 " if self.volume == 0 else "\u266a "
             self.query_one("#vol-icon", Label).update(icon)
         except NoMatches:
             pass
