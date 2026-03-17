@@ -20,6 +20,8 @@ amber_terminal = Theme(
         "scrollbar-background-hover": "#1F0D00",
         "scrollbar-background-active": "#1F0D00",
         "scrollbar-corner-color": "#1F0D00",
+        "text-muted": "#CC8800",
+        "text-disabled": "#7A4F00",
     },
 )
 
@@ -43,6 +45,8 @@ green_terminal = Theme(
         "scrollbar-background-hover": "#001A00",
         "scrollbar-background-active": "#001A00",
         "scrollbar-corner-color": "#001A00",
+        "text-muted": "#00CC00",
+        "text-disabled": "#006600",
     },
 )
 
