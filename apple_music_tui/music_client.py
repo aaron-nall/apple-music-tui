@@ -233,9 +233,16 @@ end tell"""
 
     async def play_playlist_track(self, playlist_name: str, track_index: int) -> None:
         escaped = playlist_name.replace("\\", "\\\\").replace('"', '\\"')
+        skips = track_index - 1
         script = f"""\
 tell application "Music"
     set matchedPL to first playlist whose name is "{escaped}"
-    play (track {track_index} of matchedPL)
+    play matchedPL
+    pause
+    repeat {skips} times
+        delay 0.1
+        next track
+    end repeat
+    play
 end tell"""
         await self._run(script)
