@@ -93,7 +93,7 @@ class AppleMusicApp(App):
         self.call_later(self.screen.set_focus, None)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
-        self.set_interval(600, self._sync_library)
+        self.set_interval(600, self._schedule_sync)
         self._alert("on_mount done")
 
     async def _poll_state(self) -> None:
@@ -212,9 +212,12 @@ class AppleMusicApp(App):
             browser.set_playlists(playlists)
             self._alert(f"cache loaded ({len(playlists)} playlists)")
         else:
-            self.call_later(self._load_playlists_live)
+            self.run_worker(self._load_playlists_live(), group="playlists")
 
-        self.call_later(self._sync_library)
+        self.run_worker(self._sync_library(), exclusive=True, group="sync")
+
+    def _schedule_sync(self) -> None:
+        self.run_worker(self._sync_library(), exclusive=True, group="sync")
 
     async def _sync_library(self) -> None:
         if self._syncing or self._cache is None:
