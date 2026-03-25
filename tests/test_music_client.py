@@ -286,3 +286,34 @@ class TestPlayAlbumTrack:
         await client.play_album_track('Album "Test"', 1)
         script = client._run.call_args[0][0]
         assert 'Album \\"Test\\"' in script
+
+
+class TestGetAllTracks:
+    async def test_parses_bulk_track_data(self, client: MusicClient) -> None:
+        raw = "Song A|||Song B|||>>>Album X|||Album Y|||>>>Artist 1|||Artist 2|||>>>1|||2|||"
+        client._run = AsyncMock(return_value=raw)
+        tracks = await client.get_all_tracks()
+        assert len(tracks) == 2
+        assert tracks[0] == {"track_name": "Song A", "album": "Album X", "artist": "Artist 1", "track_number": 1}
+        assert tracks[1] == {"track_name": "Song B", "album": "Album Y", "artist": "Artist 2", "track_number": 2}
+
+    async def test_returns_empty_on_none(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        assert await client.get_all_tracks() == []
+
+    async def test_returns_empty_on_bad_format(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="only two>>>parts")
+        assert await client.get_all_tracks() == []
+
+    async def test_skips_empty_names(self, client: MusicClient) -> None:
+        raw = "Song A||||||>>>Album X||||||>>>Artist 1||||||>>>1|||0|||"
+        client._run = AsyncMock(return_value=raw)
+        tracks = await client.get_all_tracks()
+        assert len(tracks) == 1
+        assert tracks[0]["track_name"] == "Song A"
+
+    async def test_uses_long_timeout(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        await client.get_all_tracks()
+        _, kwargs = client._run.call_args
+        assert kwargs.get("timeout") == 60.0

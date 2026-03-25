@@ -79,14 +79,14 @@ tell application "Music"
     return "STATE: " & pState & return & "TRACK: " & tName & return & "ARTIST: " & tArtist & return & "ALBUM: " & tAlbum & return & "POSITION: " & (pPos as string) & return & "DURATION: " & (tDur as string) & return & "VOLUME: " & (sVol as string) & return & "SHUFFLE: " & shufStr & return & "REPEAT: " & rep & return & "PLAYLIST: " & plName
 end tell"""
 
-    async def _run(self, script: str) -> str | None:
+    async def _run(self, script: str, timeout: float = 5.0) -> str | None:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "osascript", "-e", script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             if proc.returncode != 0:
                 return None
             return stdout.decode().strip()
@@ -311,3 +311,44 @@ tell application "Music"
     play item {track_index} of albumTracks
 end tell"""
         await self._run(script)
+
+    async def get_all_tracks(self) -> list[dict]:
+        """Bulk-fetch all library track metadata for cache population."""
+        script = """\
+tell application "Music"
+    set d to "|||"
+    set r to ">>>"
+    set AppleScript's text item delimiters to d
+    set nameList to (name of every track of library playlist 1) as string
+    set albumList to (album of every track of library playlist 1) as string
+    set artistList to (album artist of every track of library playlist 1) as string
+    set numList to (track number of every track of library playlist 1) as string
+    return nameList & r & albumList & r & artistList & r & numList
+end tell"""
+        raw = await self._run(script, timeout=60.0)
+        if not raw:
+            return []
+        parts = raw.split(">>>")
+        if len(parts) != 4:
+            return []
+        names = parts[0].split(self._DELIM)
+        albums = parts[1].split(self._DELIM)
+        artists = parts[2].split(self._DELIM)
+        numbers = parts[3].split(self._DELIM)
+        result: list[dict] = []
+        for name, album, artist, num in zip(names, albums, artists, numbers):
+            name = name.strip()
+            album = album.strip()
+            if not name or not album:
+                continue
+            try:
+                track_num = int(float(num.strip().replace(",", ".")))
+            except (ValueError, AttributeError):
+                track_num = 0
+            result.append({
+                "track_name": name,
+                "album": album,
+                "artist": artist.strip(),
+                "track_number": track_num,
+            })
+        return result

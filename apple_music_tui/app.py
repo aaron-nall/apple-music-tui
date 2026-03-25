@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from textual.app import App, ComposeResult
@@ -8,12 +9,15 @@ from textual.containers import Vertical
 from textual.widgets import Button, Tabs
 
 from apple_music_tui.config import load_config
+from apple_music_tui.library_cache import LibraryCache
 from apple_music_tui.music_client import MusicClient, MusicState
 from apple_music_tui.themes import CUSTOM_THEMES
 from apple_music_tui.widgets.controls import Controls, VolumeBar
 from apple_music_tui.widgets.now_playing import NowPlaying
 from apple_music_tui.widgets.playlist_browser import PlaylistBrowser
 from apple_music_tui.widgets.status_bar import StatusBar
+
+_log = logging.getLogger(__name__)
 
 
 class AppleMusicApp(App):
@@ -55,6 +59,13 @@ class AppleMusicApp(App):
         self._polling: bool = False
         self._last_known_playlist: str = ""  # tracks last auto-expanded playlist
         self._last_known_album: str = ""  # tracks last auto-expanded album
+        self._cache: LibraryCache | None = None
+        self._syncing: bool = False
+        self._t0: float = time.monotonic()
+
+    def _alert(self, msg: str) -> None:
+        elapsed = time.monotonic() - self._t0
+        self.log(f"[{elapsed:.2f}s] {msg}")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-container"):
@@ -64,6 +75,7 @@ class AppleMusicApp(App):
         yield StatusBar()
 
     def on_mount(self) -> None:
+        self._alert("on_mount start")
         for t in CUSTOM_THEMES:
             self.register_theme(t)
         saved = self._config.theme
@@ -71,15 +83,18 @@ class AppleMusicApp(App):
             self.theme = saved
         self.call_later(self._poll_state)
         self.call_later(self._load_playlists)
-        self.call_later(self._load_albums)
+        self._load_albums_cached()
         self.call_later(self.screen.set_focus, None)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
+        self.set_interval(600, self._sync_library)
+        self._alert("on_mount done")
 
     async def _poll_state(self) -> None:
         if self._polling:
             return
         self._polling = True
+        self._alert("poll_state start")
         try:
             state = await self.client.get_state()
             self._last_state = state
@@ -114,10 +129,13 @@ class AppleMusicApp(App):
                 current_album = state["album"]
                 if current_album and current_album != self._last_known_album:
                     self._last_known_album = current_album
-                    tracks = await self.client.get_album_tracks(current_album)
+                    tracks = self._cache_get_album_tracks(current_album)
+                    if tracks is None:
+                        tracks = await self.client.get_album_tracks(current_album)
                     browser.expand_album(current_album, tracks)
         finally:
             self._polling = False
+            self._alert("poll_state done")
 
     def _interpolate_position(self) -> None:
         if self._last_state is None:
@@ -132,12 +150,53 @@ class AppleMusicApp(App):
             np.position = interpolated
 
     async def _load_playlists(self) -> None:
+        self._alert("load_playlists start")
         names = await self.client.get_playlists()
         self.query_one(PlaylistBrowser).set_playlists(names)
+        self._alert(f"load_playlists done ({len(names)} playlists)")
 
-    async def _load_albums(self) -> None:
-        albums = await self.client.get_albums()
-        self.query_one(PlaylistBrowser).set_albums(albums)
+    def _load_albums_cached(self) -> None:
+        self._alert("load_albums_cached start")
+        try:
+            self._cache = LibraryCache()
+        except Exception:
+            _log.exception("Failed to init library cache")
+            return
+
+        if not self._cache.is_empty():
+            self._alert("cache hit — reading albums from SQLite")
+            albums = self._cache.get_albums()
+            self.query_one(PlaylistBrowser).set_albums(albums)
+            self._alert(f"cache loaded ({len(albums)} albums)")
+        else:
+            self._alert("cache empty — will populate in background")
+        self.call_later(self._sync_library)
+
+    async def _sync_library(self) -> None:
+        if self._syncing or self._cache is None:
+            return
+        self._syncing = True
+        self._alert("sync_library start (AppleScript bulk fetch)")
+        try:
+            tracks = await self.client.get_all_tracks()
+            self._alert(f"sync_library fetched {len(tracks)} tracks")
+            if not tracks:
+                return
+            self._cache.replace_all(tracks)
+            self._alert("sync_library cache updated")
+            albums = self._cache.get_albums()
+            self.query_one(PlaylistBrowser).set_albums(albums)
+            self._alert(f"sync_library done ({len(albums)} albums)")
+        except Exception:
+            _log.exception("Library sync failed")
+            self._alert("sync_library FAILED")
+        finally:
+            self._syncing = False
+
+    def _cache_get_album_tracks(self, album_name: str) -> list[str] | None:
+        if self._cache is None or self._cache.is_empty():
+            return None
+        return self._cache.get_album_tracks(album_name)
 
     async def on_playlist_browser_playlist_selected(
         self, message: PlaylistBrowser.PlaylistSelected
@@ -158,7 +217,9 @@ class AppleMusicApp(App):
     ) -> None:
         name = message.name
         await self.client.play_album(name)
-        tracks = await self.client.get_album_tracks(name)
+        tracks = self._cache_get_album_tracks(name)
+        if tracks is None:
+            tracks = await self.client.get_album_tracks(name)
         self.query_one(PlaylistBrowser).expand_album(name, tracks)
 
     async def on_playlist_browser_album_track_selected(
