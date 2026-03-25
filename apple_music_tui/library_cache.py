@@ -42,7 +42,7 @@ class LibraryCache:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
         try:
-            self._conn = sqlite3.connect(str(db_path))
+            self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
         except sqlite3.Error:
