@@ -52,6 +52,7 @@ class AppleMusicApp(App):
         self._last_state: MusicState | None = None
         self._polling: bool = False
         self._last_known_playlist: str = ""  # tracks last auto-expanded playlist
+        self._last_known_album: str = ""  # tracks last auto-expanded album
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-container"):
@@ -68,6 +69,7 @@ class AppleMusicApp(App):
             self.theme = saved
         self.call_later(self._poll_state)
         self.call_later(self._load_playlists)
+        self.call_later(self._load_albums)
         self.call_later(self.screen.set_focus, None)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
@@ -99,12 +101,19 @@ class AppleMusicApp(App):
             browser = self.query_one(PlaylistBrowser)
             browser.set_current_track(state["track"])
 
-            # Auto-expand if Music is playing a playlist we don't have expanded yet
-            current_pl = state["current_playlist"]
-            if current_pl and current_pl != self._last_known_playlist:
-                self._last_known_playlist = current_pl
-                tracks = await self.client.get_playlist_tracks(current_pl)
-                browser.expand_playlist(current_pl, tracks)
+            # Auto-expand the currently playing playlist or album
+            if browser._mode == "playlists":
+                current_pl = state["current_playlist"]
+                if current_pl and current_pl != self._last_known_playlist:
+                    self._last_known_playlist = current_pl
+                    tracks = await self.client.get_playlist_tracks(current_pl)
+                    browser.expand_playlist(current_pl, tracks)
+            elif browser._mode == "albums":
+                current_album = state["album"]
+                if current_album and current_album != self._last_known_album:
+                    self._last_known_album = current_album
+                    tracks = await self.client.get_album_tracks(current_album)
+                    browser.expand_album(current_album, tracks)
         finally:
             self._polling = False
 
@@ -124,6 +133,10 @@ class AppleMusicApp(App):
         names = await self.client.get_playlists()
         self.query_one(PlaylistBrowser).set_playlists(names)
 
+    async def _load_albums(self) -> None:
+        albums = await self.client.get_albums()
+        self.query_one(PlaylistBrowser).set_albums(albums)
+
     async def on_playlist_browser_playlist_selected(
         self, message: PlaylistBrowser.PlaylistSelected
     ) -> None:
@@ -137,6 +150,19 @@ class AppleMusicApp(App):
         self, message: PlaylistBrowser.TrackSelected
     ) -> None:
         await self.client.play_playlist_track(message.playlist, message.track_index)
+
+    async def on_playlist_browser_album_selected(
+        self, message: PlaylistBrowser.AlbumSelected
+    ) -> None:
+        name = message.name
+        await self.client.play_album(name)
+        tracks = await self.client.get_album_tracks(name)
+        self.query_one(PlaylistBrowser).expand_album(name, tracks)
+
+    async def on_playlist_browser_album_track_selected(
+        self, message: PlaylistBrowser.AlbumTrackSelected
+    ) -> None:
+        await self.client.play_album_track(message.album, message.track_index)
 
     async def action_play_pause(self) -> None:
         await self.client.play_pause()

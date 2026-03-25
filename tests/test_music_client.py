@@ -220,3 +220,69 @@ class TestGetPlaylistTracks:
         client._run = AsyncMock(return_value="Only Track|||")
         tracks = await client.get_playlist_tracks("Solo")
         assert tracks == ["Only Track"]
+
+
+class TestGetAlbums:
+    async def test_returns_deduplicated_sorted_albums(self, client: MusicClient) -> None:
+        raw = "Zulu Album|||Alpha Album|||Zulu Album|||>>>Artist Z|||Artist A|||Artist Z|||"
+        client._run = AsyncMock(return_value=raw)
+        albums = await client.get_albums()
+        assert albums == [("Alpha Album", "Artist A"), ("Zulu Album", "Artist Z")]
+
+    async def test_returns_empty_on_none(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        assert await client.get_albums() == []
+
+    async def test_returns_empty_on_empty_string(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="")
+        assert await client.get_albums() == []
+
+    async def test_skips_empty_album_names(self, client: MusicClient) -> None:
+        raw = "Album A||||||>>>Artist A||||||"
+        client._run = AsyncMock(return_value=raw)
+        albums = await client.get_albums()
+        assert albums == [("Album A", "Artist A")]
+
+    async def test_handles_missing_separator(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="no separator here")
+        assert await client.get_albums() == []
+
+
+class TestGetAlbumTracks:
+    async def test_returns_track_names(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="Song 1|||Song 2|||Song 3|||")
+        tracks = await client.get_album_tracks("My Album")
+        assert tracks == ["Song 1", "Song 2", "Song 3"]
+
+    async def test_returns_empty_on_none(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        assert await client.get_album_tracks("My Album") == []
+
+    async def test_escapes_album_name(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="Track|||")
+        await client.get_album_tracks('Album "With" Quotes')
+        script = client._run.call_args[0][0]
+        assert 'Album \\"With\\" Quotes' in script
+
+
+class TestPlayAlbum:
+    async def test_escapes_album_name(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        await client.play_album('Album "Test"')
+        script = client._run.call_args[0][0]
+        assert 'Album \\"Test\\"' in script
+
+
+class TestPlayAlbumTrack:
+    async def test_plays_correct_track_directly(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        await client.play_album_track("My Album", 3)
+        script = client._run.call_args[0][0]
+        assert "item 3 of albumTracks" in script
+        assert '"My Album"' in script
+
+    async def test_escapes_album_name(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value=None)
+        await client.play_album_track('Album "Test"', 1)
+        script = client._run.call_args[0][0]
+        assert 'Album \\"Test\\"' in script

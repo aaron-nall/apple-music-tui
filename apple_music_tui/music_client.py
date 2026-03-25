@@ -238,11 +238,76 @@ end tell"""
 tell application "Music"
     set matchedPL to first playlist whose name is "{escaped}"
     play matchedPL
+    delay 0.3
     pause
     repeat {skips} times
         delay 0.1
         next track
     end repeat
     play
+end tell"""
+        await self._run(script)
+
+    async def get_albums(self) -> list[tuple[str, str]]:
+        """Return deduplicated (album_name, artist) tuples sorted alphabetically."""
+        script = """\
+tell application "Music"
+    set d to "|||"
+    set r to ">>>"
+    set AppleScript's text item delimiters to d
+    set albumList to (album of every track of library playlist 1) as string
+    set artistList to (album artist of every track of library playlist 1) as string
+    return albumList & r & artistList
+end tell"""
+        raw = await self._run(script)
+        if not raw:
+            return []
+        parts = raw.split(">>>")
+        if len(parts) != 2:
+            return []
+        albums = [a.strip() for a in parts[0].split(self._DELIM)]
+        artists = [a.strip() for a in parts[1].split(self._DELIM)]
+        seen: set[tuple[str, str]] = set()
+        result: list[tuple[str, str]] = []
+        for album, artist in zip(albums, artists):
+            if not album:
+                continue
+            key = (album, artist)
+            if key not in seen:
+                seen.add(key)
+                result.append(key)
+        result.sort(key=lambda x: x[0].lower())
+        return result
+
+    async def get_album_tracks(self, album_name: str) -> list[str]:
+        escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        script = f"""\
+tell application "Music"
+    set d to "|||"
+    set output to ""
+    repeat with t in (every track of library playlist 1 whose album is "{escaped}")
+        set output to output & (name of t as string) & d
+    end repeat
+    return output
+end tell"""
+        raw = await self._run(script)
+        if not raw:
+            return []
+        return [t.strip() for t in raw.split(self._DELIM) if t.strip()]
+
+    async def play_album(self, album_name: str) -> None:
+        escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        script = f"""\
+tell application "Music"
+    play (first track of library playlist 1 whose album is "{escaped}")
+end tell"""
+        await self._run(script)
+
+    async def play_album_track(self, album_name: str, track_index: int) -> None:
+        escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        script = f"""\
+tell application "Music"
+    set albumTracks to (every track of library playlist 1 whose album is "{escaped}")
+    play item {track_index} of albumTracks
 end tell"""
         await self._run(script)
