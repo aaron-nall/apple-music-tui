@@ -5,7 +5,7 @@ import time
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Button
+from textual.widgets import Button, Tabs
 
 from apple_music_tui.config import load_config
 from apple_music_tui.music_client import MusicClient, MusicState
@@ -40,6 +40,8 @@ class AppleMusicApp(App):
         Binding("t", "cycle_theme", "Theme"),
         Binding("plus,equal", "volume_up", "Vol+"),
         Binding("minus", "volume_down", "Vol-"),
+        Binding("a", "toggle_album_sort", "Sort Albums"),
+        Binding("tab", "toggle_browse_mode", "Playlists/Albums", priority=True),
         Binding("q", "quit", "Quit"),
         Binding("question_mark", "show_help", "Help", priority=True),
     ]
@@ -182,6 +184,19 @@ class AppleMusicApp(App):
         next_mode = {"off": "all", "all": "one", "one": "off"}.get(current, "off")
         await self.client.set_repeat(next_mode)
 
+    def action_toggle_browse_mode(self) -> None:
+        browser = self.query_one(PlaylistBrowser)
+        tabs = browser.query_one(Tabs)
+        if browser._mode == "playlists":
+            tabs.active = "tab-albums"
+        else:
+            tabs.active = "tab-playlists"
+
+    def action_toggle_album_sort(self) -> None:
+        browser = self.query_one(PlaylistBrowser)
+        new_sort = browser.toggle_album_sort()
+        self.notify(f"Albums: sort by {new_sort}", timeout=2)
+
     def action_cycle_theme(self) -> None:
         themes = list(self.available_themes.keys())
         current = themes.index(self.theme) if self.theme in themes else -1
@@ -207,6 +222,8 @@ class AppleMusicApp(App):
             "  [b]\u2190[/b] / [b]h[/b]   Previous track\n"
             "  [b]s[/b]         Toggle shuffle\n"
             "  [b]r[/b]         Cycle repeat (off \u2192 all \u2192 one)\n"
+            "  [b]tab[/b]       Toggle playlists / albums\n"
+            "  [b]a[/b]         Toggle album sort (title / artist)\n"
             "  [b]t[/b]         Cycle theme\n"
             "  [b]+[/b] / [b]=[/b]   Volume up 5\n"
             "  [b]-[/b]         Volume down 5\n"

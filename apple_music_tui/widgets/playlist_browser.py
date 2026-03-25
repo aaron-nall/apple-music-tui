@@ -52,6 +52,7 @@ class PlaylistBrowser(Widget):
         self._playlist_tracks: list[str] = []
         # Album state
         self._album_items: list[tuple[str, str]] = []  # (album_name, artist)
+        self._album_sort: str = "title"  # "title" | "artist"
         self._expanded_album: str | None = None
         self._album_tracks: list[str] = []
         # Shared state
@@ -111,6 +112,13 @@ class PlaylistBrowser(Widget):
         if self._mode == "albums":
             self._rebuild_list()
 
+    def toggle_album_sort(self) -> str:
+        """Toggle between sorting by title and artist. Returns the new sort key."""
+        self._album_sort = "artist" if self._album_sort == "title" else "title"
+        if self._mode == "albums":
+            self._rebuild_list()
+        return self._album_sort
+
     # --- Shared methods ---
 
     def set_current_track(self, track_name: str | None) -> None:
@@ -151,7 +159,11 @@ class PlaylistBrowser(Widget):
             self.call_after_refresh(lv.scroll_to, 0, pl_row, animate=False)
 
     def _build_album_list(self, lv: ListView) -> None:
-        for album_name, artist in self._album_items:
+        if self._album_sort == "artist":
+            sorted_albums = sorted(self._album_items, key=lambda x: x[1].lower())
+        else:
+            sorted_albums = sorted(self._album_items, key=lambda x: x[0].lower())
+        for album_name, artist in sorted_albums:
             display = f"{album_name} - {artist}" if artist else album_name
             item = ListItem(Label(display))
             lv.append(item)
