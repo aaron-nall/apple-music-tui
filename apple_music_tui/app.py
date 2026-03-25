@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -62,6 +64,11 @@ class AppleMusicApp(App):
         self._cache: LibraryCache | None = None
         self._syncing: bool = False
         self._t0: float = time.monotonic()
+        # Album continuation: track which album is playing and advance when a track ends
+        self._album_playing: str = ""  # album name currently being played
+        self._album_artist: str = ""  # artist of the album currently being played
+        self._album_track_list: list[str] = []  # ordered track names for the album
+        self._album_track_idx: int = 0  # current index in _album_track_list
 
     def _alert(self, msg: str) -> None:
         elapsed = time.monotonic() - self._t0
@@ -82,8 +89,7 @@ class AppleMusicApp(App):
         if saved in self.available_themes:
             self.theme = saved
         self.call_later(self._poll_state)
-        self.call_later(self._load_playlists)
-        self._load_albums_cached()
+        self._load_library_cached()
         self.call_later(self.screen.set_focus, None)
         self.set_interval(1.0, self._poll_state)
         self.set_interval(0.25, self._interpolate_position)
@@ -116,23 +122,51 @@ class AppleMusicApp(App):
             ctrl.volume = state["volume"]
 
             browser = self.query_one(PlaylistBrowser)
-            browser.set_current_track(state["track"])
+            browser.set_current_track(state["track"], state.get("album"))
+
+            # Album continuation: if we started album playback and it stopped,
+            # advance to the next track in the album.
+            if self._album_playing and self._album_track_list:
+                if state["state"] == "stopped" and self._album_track_idx < len(self._album_track_list) - 1:
+                    self._album_track_idx += 1
+                    self._alert(f"album continue: track {self._album_track_idx + 1}/{len(self._album_track_list)}")
+                    next_track_name = self._album_track_list[self._album_track_idx]
+                    await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, next_track_name, self._album_artist)
+                elif state["state"] == "stopped":
+                    self._album_playing = ""  # reached end of album
+                elif state["state"] == "playing" and state["track"] in self._album_track_list:
+                    self._album_track_idx = self._album_track_list.index(state["track"])
 
             # Auto-expand the currently playing playlist or album
             if browser._mode == "playlists":
                 current_pl = state["current_playlist"]
                 if current_pl and current_pl != self._last_known_playlist:
                     self._last_known_playlist = current_pl
-                    tracks = await self.client.get_playlist_tracks(current_pl)
+                    tracks = self._cache_get_playlist_tracks(current_pl)
+                    if not tracks:
+                        tracks = await self.client.get_playlist_tracks(current_pl)
                     browser.expand_playlist(current_pl, tracks)
             elif browser._mode == "albums":
                 current_album = state["album"]
                 if current_album and current_album != self._last_known_album:
                     self._last_known_album = current_album
-                    tracks = self._cache_get_album_tracks(current_album)
-                    if tracks is None:
-                        tracks = await self.client.get_album_tracks(current_album)
-                    browser.expand_album(current_album, tracks)
+                    if self._album_playing == current_album and self._album_artist:
+                        artist = self._album_artist
+                    else:
+                        # Look up album artist from the browser's album list
+                        matches = [a for n, a in browser._album_items if n == current_album]
+                        if len(matches) == 1:
+                            artist = matches[0]
+                        elif matches:
+                            # Multiple albums with same name; match track artist
+                            track_artist = state.get("artist", "")
+                            artist = next((a for a in matches if a == track_artist), matches[0])
+                        else:
+                            artist = ""
+                    tracks = self._cache_get_album_tracks(current_album, artist)
+                    if not tracks:
+                        tracks = await self.client.get_album_tracks(current_album, artist)
+                    browser.expand_album(current_album, tracks, artist)
         finally:
             self._polling = False
             self._alert("poll_state done")
@@ -149,92 +183,153 @@ class AppleMusicApp(App):
             np = self.query_one(NowPlaying)
             np.position = interpolated
 
-    async def _load_playlists(self) -> None:
-        self._alert("load_playlists start")
+    async def _load_playlists_live(self) -> None:
+        self._alert("load_playlists_live start")
         names = await self.client.get_playlists()
         self.query_one(PlaylistBrowser).set_playlists(names)
-        self._alert(f"load_playlists done ({len(names)} playlists)")
+        self._alert(f"load_playlists_live done ({len(names)} playlists)")
 
-    def _load_albums_cached(self) -> None:
-        self._alert("load_albums_cached start")
+    def _load_library_cached(self) -> None:
+        self._alert("load_library_cached start")
         try:
             self._cache = LibraryCache()
         except Exception:
             _log.exception("Failed to init library cache")
             return
 
+        browser = self.query_one(PlaylistBrowser)
         if not self._cache.is_empty():
             self._alert("cache hit — reading albums from SQLite")
             albums = self._cache.get_albums()
-            self.query_one(PlaylistBrowser).set_albums(albums)
+            browser.set_albums(albums)
             self._alert(f"cache loaded ({len(albums)} albums)")
         else:
             self._alert("cache empty — will populate in background")
+
+        if self._cache.has_playlists():
+            self._alert("cache hit — reading playlists from SQLite")
+            playlists = self._cache.get_playlists()
+            browser.set_playlists(playlists)
+            self._alert(f"cache loaded ({len(playlists)} playlists)")
+        else:
+            self.call_later(self._load_playlists_live)
+
         self.call_later(self._sync_library)
 
     async def _sync_library(self) -> None:
         if self._syncing or self._cache is None:
             return
+        last = self._cache.get_last_sync()
+        if last is not None:
+            age = (datetime.now(timezone.utc) - last).total_seconds()
+            if age < 300:  # skip if synced less than 5 minutes ago
+                self._alert(f"sync_library skipped (last sync {age:.0f}s ago)")
+                return
         self._syncing = True
         self._alert("sync_library start (AppleScript bulk fetch)")
+        loop = asyncio.get_event_loop()
         try:
             tracks = await self.client.get_all_tracks()
             self._alert(f"sync_library fetched {len(tracks)} tracks")
-            if not tracks:
-                return
-            self._cache.replace_all(tracks)
-            self._alert("sync_library cache updated")
-            albums = self._cache.get_albums()
-            self.query_one(PlaylistBrowser).set_albums(albums)
-            self._alert(f"sync_library done ({len(albums)} albums)")
+            if tracks:
+                await loop.run_in_executor(None, self._cache.replace_all, tracks)
+                self._alert("sync_library cache updated")
+                albums = self._cache.get_albums()
+                self.query_one(PlaylistBrowser).set_albums(albums)
+                self._alert(f"sync_library albums done ({len(albums)} albums)")
+
+            playlist_names = await self.client.get_playlists()
+            self._alert(f"sync_library fetched {len(playlist_names)} playlist names")
+            if playlist_names:
+                playlists: dict[str, list[str]] = {}
+                for name in playlist_names:
+                    self._alert(f"loading tracks for {name}")
+                    pl_tracks = await self.client.get_playlist_tracks(name)
+                    playlists[name] = pl_tracks
+                await loop.run_in_executor(None, self._cache.replace_playlists, playlists)
+                self.query_one(PlaylistBrowser).set_playlists(playlist_names)
+                self._alert(f"sync_library playlists done ({len(playlists)} playlists)")
         except Exception:
             _log.exception("Library sync failed")
             self._alert("sync_library FAILED")
         finally:
             self._syncing = False
 
-    def _cache_get_album_tracks(self, album_name: str) -> list[str] | None:
+    def _cache_get_album_tracks(self, album_name: str, artist: str = "") -> list[str] | None:
         if self._cache is None or self._cache.is_empty():
             return None
-        return self._cache.get_album_tracks(album_name)
+        return self._cache.get_album_tracks(album_name, artist)
+
+    def _cache_get_playlist_tracks(self, playlist_name: str) -> list[str] | None:
+        if self._cache is None or not self._cache.has_playlists():
+            return None
+        tracks = self._cache.get_playlist_tracks(playlist_name)
+        return tracks or None
 
     async def on_playlist_browser_playlist_selected(
         self, message: PlaylistBrowser.PlaylistSelected
     ) -> None:
+        self._album_playing = ""  # stop album continuation
         name = message.name
         await self.client.play_playlist(name)
-        tracks = await self.client.get_playlist_tracks(name)
+        tracks = self._cache_get_playlist_tracks(name)
+        if not tracks:
+            tracks = await self.client.get_playlist_tracks(name)
         self._last_known_playlist = name
         self.query_one(PlaylistBrowser).expand_playlist(name, tracks)
 
     async def on_playlist_browser_track_selected(
         self, message: PlaylistBrowser.TrackSelected
     ) -> None:
+        self._album_playing = ""
         await self.client.play_playlist_track(message.playlist, message.track_index)
+
+    async def _start_album_continuation(self, album_name: str, start_idx: int = 0, artist: str = "") -> list[str]:
+        """Set up album continuation tracking and return the track list."""
+        tracks = self._cache_get_album_tracks(album_name, artist)
+        if not tracks:
+            tracks = await self.client.get_album_tracks(album_name, artist)
+        self._album_playing = album_name
+        self._album_artist = artist
+        self._album_track_list = tracks
+        self._album_track_idx = start_idx
+        return tracks
 
     async def on_playlist_browser_album_selected(
         self, message: PlaylistBrowser.AlbumSelected
     ) -> None:
         name = message.name
-        await self.client.play_album(name)
-        tracks = self._cache_get_album_tracks(name)
-        if tracks is None:
-            tracks = await self.client.get_album_tracks(name)
-        self.query_one(PlaylistBrowser).expand_album(name, tracks)
+        artist = message.artist
+        await self.client.play_album(name, artist)
+        tracks = await self._start_album_continuation(name, 0, artist)
+        self.query_one(PlaylistBrowser).expand_album(name, tracks, artist)
 
     async def on_playlist_browser_album_track_selected(
         self, message: PlaylistBrowser.AlbumTrackSelected
     ) -> None:
-        await self.client.play_album_track(message.album, message.track_index)
+        await self.client.play_album_track(message.album, message.track_index, message.track_name, message.artist)
+        await self._start_album_continuation(message.album, message.track_index - 1, message.artist)
 
     async def action_play_pause(self) -> None:
         await self.client.play_pause()
 
     async def action_next_track(self) -> None:
-        await self.client.next_track()
+        if self._album_playing and self._album_track_list:
+            if self._album_track_idx < len(self._album_track_list) - 1:
+                self._album_track_idx += 1
+                track_name = self._album_track_list[self._album_track_idx]
+                await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, track_name, self._album_artist)
+        else:
+            await self.client.next_track()
 
     async def action_previous_track(self) -> None:
-        await self.client.previous_track()
+        if self._album_playing and self._album_track_list:
+            if self._album_track_idx > 0:
+                self._album_track_idx -= 1
+                track_name = self._album_track_list[self._album_track_idx]
+                await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, track_name, self._album_artist)
+        else:
+            await self.client.previous_track()
 
     async def action_toggle_shuffle(self) -> None:
         current = self._last_state["shuffle"] if self._last_state else False

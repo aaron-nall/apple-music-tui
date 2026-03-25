@@ -65,9 +65,11 @@ class PlaylistBrowser(Widget):
         self._album_items: list[tuple[str, str]] = []  # (album_name, artist)
         self._album_sort: str = "title"  # "title" | "artist"
         self._expanded_album: str | None = None
+        self._expanded_album_artist: str = ""
         self._album_tracks: list[str] = []
         # Shared state
         self._current_track: str | None = None
+        self._current_album: str | None = None
         # Each entry: {"type": "playlist"|"track"|"album", "name": str, "track_index": int, "album_name": str}
         self._flat_items: list[dict] = []
         self._highlighted_idx: int | None = None
@@ -128,14 +130,16 @@ class PlaylistBrowser(Widget):
         if self._mode == "albums":
             self._rebuild_list()
 
-    def expand_album(self, album_name: str, tracks: list[str]) -> None:
+    def expand_album(self, album_name: str, tracks: list[str], artist: str = "") -> None:
         self._expanded_album = album_name
+        self._expanded_album_artist = artist
         self._album_tracks = list(tracks)
         if self._mode == "albums":
             self._rebuild_list()
 
     def collapse_album(self) -> None:
         self._expanded_album = None
+        self._expanded_album_artist = ""
         self._album_tracks = []
         if self._mode == "albums":
             self._rebuild_list()
@@ -150,10 +154,11 @@ class PlaylistBrowser(Widget):
 
     # --- Shared methods ---
 
-    def set_current_track(self, track_name: str | None) -> None:
-        if track_name == self._current_track:
+    def set_current_track(self, track_name: str | None, album_name: str | None = None) -> None:
+        if track_name == self._current_track and album_name == self._current_album:
             return
         self._current_track = track_name
+        self._current_album = album_name
         self._update_track_highlight()
 
     def _rebuild_list(self) -> None:
@@ -198,24 +203,27 @@ class PlaylistBrowser(Widget):
             lv.append(item)
             self._flat_items.append({"type": "album", "name": album_name, "artist": artist})
 
-            if album_name == self._expanded_album:
+            if album_name == self._expanded_album and artist == self._expanded_album_artist:
                 for i, track in enumerate(self._album_tracks, start=1):
                     track_item = ListItem(Label(f"  {track}"))
                     lv.append(track_item)
                     self._flat_items.append({"type": "track", "name": track, "track_index": i, "album_name": album_name})
 
         if self._expanded_album:
-            for idx, (aname, _) in enumerate(self._album_items):
-                if aname == self._expanded_album:
+            for idx, (aname, aartist) in enumerate(sorted_albums):
+                if aname == self._expanded_album and aartist == self._expanded_album_artist:
                     self.call_after_refresh(lv.scroll_to, 0, idx, animate=False)
                     break
 
     def _update_track_highlight(self) -> None:
         new_idx: int | None = None
         for i, meta in enumerate(self._flat_items):
-            if meta["type"] == "track" and meta["name"] == self._current_track:
-                new_idx = i
-                break
+            if meta["type"] != "track" or meta["name"] != self._current_track:
+                continue
+            if self._mode == "albums" and self._current_album and meta.get("album_name") != self._current_album:
+                continue
+            new_idx = i
+            break
 
         if new_idx == self._highlighted_idx:
             return
@@ -240,12 +248,14 @@ class PlaylistBrowser(Widget):
         if meta["type"] == "playlist":
             self.post_message(self.PlaylistSelected(meta["name"]))
         elif meta["type"] == "album":
-            self.post_message(self.AlbumSelected(meta["name"]))
+            self.post_message(self.AlbumSelected(meta["name"], meta.get("artist", "")))
         elif meta["type"] == "track":
             if self._mode == "playlists" and self._expanded_playlist:
                 self.post_message(self.TrackSelected(self._expanded_playlist, meta["track_index"]))
             elif self._mode == "albums" and meta.get("album_name"):
-                self.post_message(self.AlbumTrackSelected(meta["album_name"], meta["track_index"]))
+                album_meta = next((m for m in self._flat_items if m["type"] == "album" and m["name"] == meta["album_name"]), None)
+                artist = album_meta.get("artist", "") if album_meta else ""
+                self.post_message(self.AlbumTrackSelected(meta["album_name"], meta["track_index"], meta["name"], artist))
 
     class PlaylistSelected(Message):
         def __init__(self, name: str) -> None:
@@ -259,12 +269,15 @@ class PlaylistBrowser(Widget):
             self.track_index = track_index
 
     class AlbumSelected(Message):
-        def __init__(self, name: str) -> None:
+        def __init__(self, name: str, artist: str = "") -> None:
             super().__init__()
             self.name = name
+            self.artist = artist
 
     class AlbumTrackSelected(Message):
-        def __init__(self, album: str, track_index: int) -> None:
+        def __init__(self, album: str, track_index: int, track_name: str = "", artist: str = "") -> None:
             super().__init__()
             self.album = album
             self.track_index = track_index
+            self.track_name = track_name
+            self.artist = artist

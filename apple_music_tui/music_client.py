@@ -279,13 +279,17 @@ end tell"""
         result.sort(key=lambda x: x[0].lower())
         return result
 
-    async def get_album_tracks(self, album_name: str) -> list[str]:
+    async def get_album_tracks(self, album_name: str, artist: str = "") -> list[str]:
         escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        condition = f'whose album is "{escaped}"'
+        if artist:
+            escaped_artist = artist.replace("\\", "\\\\").replace('"', '\\"')
+            condition += f' and album artist is "{escaped_artist}"'
         script = f"""\
 tell application "Music"
     set d to "|||"
     set output to ""
-    repeat with t in (every track of library playlist 1 whose album is "{escaped}")
+    repeat with t in (every track of library playlist 1 {condition})
         set output to output & (name of t as string) & d
     end repeat
     return output
@@ -295,19 +299,34 @@ end tell"""
             return []
         return [t.strip() for t in raw.split(self._DELIM) if t.strip()]
 
-    async def play_album(self, album_name: str) -> None:
+    async def play_album(self, album_name: str, artist: str = "") -> None:
         escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        condition = f'whose album is "{escaped}"'
+        if artist:
+            escaped_artist = artist.replace("\\", "\\\\").replace('"', '\\"')
+            condition += f' and album artist is "{escaped_artist}"'
         script = f"""\
 tell application "Music"
-    play (first track of library playlist 1 whose album is "{escaped}")
+    play (first track of library playlist 1 {condition})
 end tell"""
         await self._run(script)
 
-    async def play_album_track(self, album_name: str, track_index: int) -> None:
-        escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
-        script = f"""\
+    async def play_album_track(self, album_name: str, track_index: int, track_name: str = "", artist: str = "") -> None:
+        escaped_album = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        artist_clause = ""
+        if artist:
+            escaped_artist = artist.replace("\\", "\\\\").replace('"', '\\"')
+            artist_clause = f' and album artist is "{escaped_artist}"'
+        if track_name:
+            escaped_track = track_name.replace("\\", "\\\\").replace('"', '\\"')
+            script = f"""\
 tell application "Music"
-    set albumTracks to (every track of library playlist 1 whose album is "{escaped}")
+    play (first track of library playlist 1 whose album is "{escaped_album}" and name is "{escaped_track}"{artist_clause})
+end tell"""
+        else:
+            script = f"""\
+tell application "Music"
+    set albumTracks to (every track of library playlist 1 whose album is "{escaped_album}"{artist_clause})
     play item {track_index} of albumTracks
 end tell"""
         await self._run(script)

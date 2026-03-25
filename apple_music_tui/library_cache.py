@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS tracks (
     track_number INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
+CREATE TABLE IF NOT EXISTS playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_name TEXT NOT NULL,
+    track_name TEXT NOT NULL,
+    track_position INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_playlists_name ON playlists(playlist_name);
 CREATE TABLE IF NOT EXISTS cache_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -55,12 +62,48 @@ class LibraryCache:
         ).fetchall()
         return [(r[0], r[1]) for r in rows]
 
-    def get_album_tracks(self, album_name: str) -> list[str]:
+    def get_album_tracks(self, album_name: str, artist: str = "") -> list[str]:
+        if artist:
+            rows = self._conn.execute(
+                "SELECT track_name FROM tracks WHERE album = ? AND artist = ? ORDER BY track_number",
+                (album_name, artist),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT track_name FROM tracks WHERE album = ? ORDER BY track_number",
+                (album_name,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_playlists(self) -> list[str]:
         rows = self._conn.execute(
-            "SELECT track_name FROM tracks WHERE album = ? ORDER BY track_number",
-            (album_name,),
+            "SELECT DISTINCT playlist_name FROM playlists ORDER BY playlist_name COLLATE NOCASE"
         ).fetchall()
         return [r[0] for r in rows]
+
+    def get_playlist_tracks(self, playlist_name: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT track_name FROM playlists WHERE playlist_name = ? ORDER BY track_position",
+            (playlist_name,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def replace_playlists(self, playlists: dict[str, list[str]]) -> None:
+        """Replace all cached playlists with a fresh set."""
+        with self._conn:
+            self._conn.execute("DELETE FROM playlists")
+            rows = []
+            for name, tracks in playlists.items():
+                for pos, track in enumerate(tracks, start=1):
+                    rows.append((name, track, pos))
+            self._conn.executemany(
+                "INSERT INTO playlists (playlist_name, track_name, track_position) VALUES (?, ?, ?)",
+                rows,
+            )
+
+    def has_playlists(self) -> bool:
+        row = self._conn.execute("SELECT COUNT(*) FROM playlists").fetchone()
+        return row[0] > 0
 
     def replace_all(self, tracks: list[dict]) -> None:
         """Replace all cached tracks with a fresh set."""
