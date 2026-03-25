@@ -21,6 +21,17 @@ class PlaylistBrowser(Widget):
         height: 3;
         background: $surface;
     }
+    PlaylistBrowser > #sort-label {
+        height: 1;
+        width: 1fr;
+        text-align: right;
+        padding: 0 2;
+        color: $text-muted;
+        display: none;
+    }
+    PlaylistBrowser > #sort-label.visible {
+        display: block;
+    }
     PlaylistBrowser > ListView {
         height: 1fr;
         width: 1fr;
@@ -66,13 +77,30 @@ class PlaylistBrowser(Widget):
             Tab("Playlists", id="tab-playlists"),
             Tab("Albums", id="tab-albums"),
         )
+        yield Label(self._sort_label_text(), id="sort-label")
         yield ListView()
+
+    def _sort_label_text(self) -> str:
+        return f"↑↓ {self._album_sort}"
+
+    def on_click(self, event) -> None:
+        if self._mode == "albums" and event.widget and event.widget.id == "sort-label":
+            self.toggle_album_sort()
+
+    def _update_sort_label(self) -> None:
+        label = self.query_one("#sort-label", Label)
+        label.update(self._sort_label_text())
+        if self._mode == "albums":
+            label.add_class("visible")
+        else:
+            label.remove_class("visible")
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         new_mode = "albums" if event.tab.id == "tab-albums" else "playlists"
         if new_mode != self._mode:
             self._mode = new_mode
             self._rebuild_list()
+        self._update_sort_label()
 
     # --- Playlist methods ---
 
@@ -117,6 +145,7 @@ class PlaylistBrowser(Widget):
         self._album_sort = "artist" if self._album_sort == "title" else "title"
         if self._mode == "albums":
             self._rebuild_list()
+        self._update_sort_label()
         return self._album_sort
 
     # --- Shared methods ---
