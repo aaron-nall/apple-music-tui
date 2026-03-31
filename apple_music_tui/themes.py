@@ -47,6 +47,8 @@ green_terminal = Theme(
         "scrollbar-corner-color": "#001A00",
         "text-muted": "#00CC00",
         "text-disabled": "#006600",
+        "block-cursor-foreground": "#001200",
+        "block-cursor-blurred-foreground": "#33FF33",
     },
 )
 

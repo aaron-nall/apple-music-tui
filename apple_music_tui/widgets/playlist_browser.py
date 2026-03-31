@@ -50,6 +50,7 @@ class PlaylistBrowser(Widget):
     }
     PlaylistBrowser > ListView > ListItem.playing-track {
         background: $accent 40%;
+        color: $foreground;
         text-style: bold;
     }
     """

@@ -51,6 +51,7 @@ class LyricsOverlay(VerticalScroll):
         super().__init__()
         self._current_idx: int = -1
         self._line_count: int = 0
+        self._lines: list[str] = []
 
     def on_mount(self) -> None:
         self._center()
@@ -74,6 +75,7 @@ class LyricsOverlay(VerticalScroll):
         await self.remove_children()
         self._current_idx = -1
         self._line_count = 0
+        self._lines = []
 
     async def show_loading(self, track: str, artist: str) -> None:
         """Display loading state."""
@@ -95,6 +97,7 @@ class LyricsOverlay(VerticalScroll):
             text = line if line.strip() else " "
             await self.mount(Label(text, id=f"lyrics-line-{i}", classes="lyrics-line"))
         self._line_count = len(lines)
+        self._lines = lines
         self.scroll_home(animate=False)
 
     class LyricLineClicked(Message):
@@ -132,6 +135,15 @@ class LyricsOverlay(VerticalScroll):
             try:
                 cur = self.query_one(f"#lyrics-line-{index}", Label)
                 cur.add_class("--current")
-                cur.scroll_visible(animate=False)
+                # Scroll to next non-empty line so current line has visible context
+                scroll_target = cur
+                for next_idx in range(index + 1, self._line_count):
+                    if self._lines[next_idx].strip():
+                        try:
+                            scroll_target = self.query_one(f"#lyrics-line-{next_idx}", Label)
+                        except Exception:
+                            pass
+                        break
+                scroll_target.scroll_visible(animate=False)
             except Exception:
                 pass
