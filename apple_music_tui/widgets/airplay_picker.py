@@ -29,7 +29,7 @@ class AirPlayOverlay(Vertical):
         text-style: bold;
         width: 100%;
         padding: 0 0 0 0;
-        color: $text;
+        color: $accent;
     }
     AirPlayOverlay .ap-row {
         width: 100%;
@@ -59,14 +59,10 @@ class AirPlayPicker(Widget):
         border: none;
         background: transparent;
         padding: 0 1;
+        &:focus { background: transparent; }
     }
     AirPlayPicker #btn-airplay:hover {
         background: $surface-lighten-2;
-    }
-    AirPlayPicker #btn-airplay.active {
-        background: $accent;
-        color: $background;
-        text-style: bold;
     }
     """
 
@@ -83,7 +79,7 @@ class AirPlayPicker(Widget):
         pass
 
     def compose(self) -> ComposeResult:
-        yield Button("\U0001f50a", id="btn-airplay")
+        yield Button(")))", id="btn-airplay")
 
     def _get_overlay(self) -> AirPlayOverlay | None:
         try:
@@ -133,14 +129,11 @@ class AirPlayPicker(Widget):
             row._airplay_index = dev["index"]
             row._airplay_selected = dev["selected"]
             overlay.mount(row)
-        # Update button highlight
-        any_active = any(d["selected"] for d in self.devices)
-        btn = self.query_one("#btn-airplay", Button)
-        btn.set_class(any_active, "active")
         if self.expanded:
             self._position_overlay(overlay)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-airplay":
             self.expanded = not self.expanded
+            event.button.blur()
             event.stop()
