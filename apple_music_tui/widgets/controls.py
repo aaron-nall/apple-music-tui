@@ -9,6 +9,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Label
 
+from apple_music_tui.widgets.airplay_picker import AirPlayPicker
+
 
 class VolumeBar(Widget):
     """Volume display: clickable icon (mute toggle) + clickable bar (set level) + number."""
@@ -142,6 +144,7 @@ class Controls(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="control-row"):
+            yield AirPlayPicker()
             yield Label("", classes="control-spacer")
             yield Button("\u21c4", id="btn-shuffle")
             yield Button("|\u25c0\u25c0", id="btn-prev")

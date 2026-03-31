@@ -8,12 +8,14 @@ from datetime import datetime, timezone
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.events import Click
 from textual.widgets import Button, Tabs
 
 from apple_music_tui.config import load_config
 from apple_music_tui.library_cache import LibraryCache
 from apple_music_tui.music_client import MusicClient, MusicState
 from apple_music_tui.themes import CUSTOM_THEMES
+from apple_music_tui.widgets.airplay_picker import AirPlayOverlay, AirPlayPicker
 from apple_music_tui.widgets.controls import Controls, VolumeBar
 from apple_music_tui.widgets.now_playing import NowPlaying
 from apple_music_tui.widgets.playlist_browser import PlaylistBrowser
@@ -30,6 +32,7 @@ class AppleMusicApp(App):
     CSS = """
     Screen {
         background: $surface;
+        layers: default overlay;
     }
     #main-container {
         height: auto;
@@ -47,6 +50,7 @@ class AppleMusicApp(App):
         Binding("plus,equal", "volume_up", "Vol+"),
         Binding("minus", "volume_down", "Vol-"),
         Binding("a", "toggle_album_sort", "Sort Albums"),
+        Binding("o", "toggle_airplay", "AirPlay"),
         Binding("tab", "toggle_browse_mode", "Playlists/Albums", priority=True),
         Binding("q", "quit", "Quit"),
         Binding("question_mark", "show_help", "Help", priority=True),
@@ -372,6 +376,19 @@ class AppleMusicApp(App):
         current = self._last_state["volume"] if self._last_state else 50
         await self.client.set_volume(max(0, current - 5))
 
+    def action_toggle_airplay(self) -> None:
+        picker = self.query_one(AirPlayPicker)
+        picker.expanded = not picker.expanded
+
+    async def on_air_play_picker_picker_opened(self, message: AirPlayPicker.PickerOpened) -> None:
+        devices = await self.client.get_airplay_devices()
+        self.query_one(AirPlayPicker).devices = devices
+
+    async def on_air_play_picker_device_toggled(self, message: AirPlayPicker.DeviceToggled) -> None:
+        await self.client.set_airplay_device_selected(message.device_index, message.selected)
+        devices = await self.client.get_airplay_devices()
+        self.query_one(AirPlayPicker).devices = devices
+
     def action_show_help(self) -> None:
         help_text = (
             "[b]Keyboard Shortcuts[/b]\n"
@@ -383,6 +400,7 @@ class AppleMusicApp(App):
             "  [b]r[/b]         Cycle repeat (off \u2192 all \u2192 one)\n"
             "  [b]tab[/b]       Toggle playlists / albums\n"
             "  [b]a[/b]         Toggle album sort (title / artist)\n"
+            "  [b]o[/b]         AirPlay output\n"
             "  [b]t[/b]         Cycle theme\n"
             "  [b]+[/b] / [b]=[/b]   Volume up 5\n"
             "  [b]-[/b]         Volume down 5\n"
@@ -390,6 +408,25 @@ class AppleMusicApp(App):
             "  [b]q[/b]         Quit"
         )
         self.notify(help_text, title="Help", timeout=8)
+
+    def on_click(self, event: Click) -> None:
+        picker = self.query_one(AirPlayPicker)
+        if not picker.expanded:
+            return
+        # Check if click is on overlay device row
+        try:
+            overlay = self.screen.query_one(AirPlayOverlay)
+            for row in overlay.query(".ap-row"):
+                if hasattr(row, "_airplay_index") and row.region.contains_point(event.screen_offset):
+                    new_selected = not row._airplay_selected
+                    picker.post_message(AirPlayPicker.DeviceToggled(row._airplay_index, new_selected))
+                    event.stop()
+                    return
+            # Close if click is outside both button and overlay
+            if not picker.region.contains_point(event.screen_offset) and not overlay.region.contains_point(event.screen_offset):
+                picker.expanded = False
+        except Exception:
+            picker.expanded = False
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

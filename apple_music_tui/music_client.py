@@ -7,6 +7,13 @@ from typing import Literal, TypedDict
 _log = logging.getLogger(__name__)
 
 
+class AirPlayDevice(TypedDict):
+    name: str
+    kind: str
+    selected: bool
+    index: int  # 1-based AppleScript index for disambiguation
+
+
 class MusicState(TypedDict):
     running: bool
     state: str
@@ -371,3 +378,34 @@ end tell"""
                 "track_number": track_num,
             })
         return result
+
+    async def get_airplay_devices(self) -> list[AirPlayDevice]:
+        script = """\
+tell application "Music"
+    set d to "|||"
+    set r to ">>>"
+    set AppleScript's text item delimiters to d
+    set nameStr to (name of every AirPlay device) as string
+    set kindStr to (kind of every AirPlay device) as string
+    set selStr to (selected of every AirPlay device) as string
+    return nameStr & r & kindStr & r & selStr
+end tell"""
+        raw = await self._run(script)
+        if not raw:
+            return []
+        parts = raw.split(">>>")
+        if len(parts) != 3:
+            return []
+        names = [n.strip() for n in parts[0].split(self._DELIM)]
+        kinds = [k.strip() for k in parts[1].split(self._DELIM)]
+        sels = [s.strip().lower() == "true" for s in parts[2].split(self._DELIM)]
+        result: list[AirPlayDevice] = []
+        for i, (name, kind, selected) in enumerate(zip(names, kinds, sels)):
+            if not name:
+                continue
+            result.append({"name": name, "kind": kind, "selected": selected, "index": i + 1})
+        return result
+
+    async def set_airplay_device_selected(self, index: int, selected: bool) -> None:
+        val = "true" if selected else "false"
+        await self._run(f'tell application "Music" to set selected of AirPlay device {index} to {val}')
