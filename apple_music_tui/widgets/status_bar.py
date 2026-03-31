@@ -29,7 +29,7 @@ class StatusBar(Widget):
     status_text: reactive[str] = reactive("")
 
     def on_mount(self) -> None:
-        self.status_text = f"Apple Music TUI v{_VERSION}  |  ?: help  q: quit"
+        self.status_text = f"Apple Music TUI v{_VERSION}  |  y: lyrics  ?: help  q: quit"
 
     def compose(self) -> ComposeResult:
         yield Label(self.status_text, id="status-label")

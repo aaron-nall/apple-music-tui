@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS cache_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS lyrics (
+    track_name TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT NOT NULL,
+    synced_lyrics TEXT,
+    plain_lyrics TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (track_name, artist, album)
+);
 """
 
 
@@ -116,6 +125,27 @@ class LibraryCache:
             self._conn.execute(
                 "INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('last_sync', ?)",
                 (datetime.now(timezone.utc).isoformat(),),
+            )
+
+    def get_lyrics(self, track: str, artist: str, album: str) -> dict | None:
+        """Return cached lyrics or None if not cached."""
+        row = self._conn.execute(
+            "SELECT synced_lyrics, plain_lyrics FROM lyrics WHERE track_name = ? AND artist = ? AND album = ?",
+            (track, artist, album),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"synced_lyrics": row[0] or None, "plain_lyrics": row[1] or None}
+
+    def store_lyrics(
+        self, track: str, artist: str, album: str, synced: str | None, plain: str | None
+    ) -> None:
+        """Cache lyrics for a track (upsert)."""
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO lyrics (track_name, artist, album, synced_lyrics, plain_lyrics, fetched_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (track, artist, album, synced or "", plain or "", datetime.now(timezone.utc).isoformat()),
             )
 
     def get_last_sync(self) -> datetime | None:

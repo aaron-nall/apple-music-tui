@@ -13,10 +13,12 @@ from textual.widgets import Button, Tabs
 
 from apple_music_tui.config import load_config
 from apple_music_tui.library_cache import LibraryCache
+from apple_music_tui.lyrics import fetch_lyrics, find_current_line, parse_lrc
 from apple_music_tui.music_client import MusicClient, MusicState
 from apple_music_tui.themes import CUSTOM_THEMES
 from apple_music_tui.widgets.airplay_picker import AirPlayOverlay, AirPlayPicker
 from apple_music_tui.widgets.controls import Controls, VolumeBar
+from apple_music_tui.widgets.lyrics_overlay import LyricsOverlay
 from apple_music_tui.widgets.now_playing import NowPlaying
 from apple_music_tui.widgets.playlist_browser import PlaylistBrowser
 from apple_music_tui.widgets.status_bar import StatusBar
@@ -51,6 +53,8 @@ class AppleMusicApp(App):
         Binding("minus", "volume_down", "Vol-"),
         Binding("a", "toggle_album_sort", "Sort Albums"),
         Binding("o", "toggle_airplay", "AirPlay"),
+        Binding("y", "toggle_lyrics", "Lyrics"),
+        Binding("escape", "close_overlay", "Close", show=False, priority=True),
         Binding("tab", "toggle_browse_mode", "Playlists/Albums", priority=True),
         Binding("q", "quit", "Quit"),
         Binding("question_mark", "show_help", "Help", priority=True),
@@ -73,6 +77,14 @@ class AppleMusicApp(App):
         self._album_artist: str = ""  # artist of the album currently being played
         self._album_track_list: list[str] = []  # ordered track names for the album
         self._album_track_idx: int = 0  # current index in _album_track_list
+        # Lyrics state
+        self._lyrics_visible: bool = False
+        self._lyrics_track: str = ""
+        self._lyrics_artist: str = ""
+        self._parsed_lyrics: list[tuple[float, str]] | None = None
+        self._lyrics_synced: bool = False
+        self._lyrics_current_line: int = -1
+        self._lyrics_loading: bool = False
 
     def _alert(self, msg: str) -> None:
         elapsed = time.monotonic() - self._t0
@@ -84,6 +96,7 @@ class AppleMusicApp(App):
             yield Controls()
         yield PlaylistBrowser()
         yield StatusBar()
+        yield LyricsOverlay()
 
     def on_mount(self) -> None:
         self._alert("on_mount start")
@@ -127,6 +140,12 @@ class AppleMusicApp(App):
 
             browser = self.query_one(PlaylistBrowser)
             browser.set_current_track(state["track"], state.get("album"))
+
+            # Refresh lyrics if track changed while overlay is open
+            if self._lyrics_visible and not self._lyrics_loading:
+                if state["track"] != self._lyrics_track or state["artist"] != self._lyrics_artist:
+                    self._lyrics_current_line = -1
+                    self.run_worker(self._load_lyrics(), group="lyrics")
 
             # Album continuation: if we started album playback and it stopped,
             # advance to the next track in the album.
@@ -186,6 +205,12 @@ class AppleMusicApp(App):
                 interpolated = min(interpolated, duration)
             np = self.query_one(NowPlaying)
             np.position = interpolated
+            # Update lyrics scroll position
+            if self._lyrics_visible and self._lyrics_synced and self._parsed_lyrics:
+                idx = find_current_line(self._parsed_lyrics, interpolated)
+                if idx != self._lyrics_current_line:
+                    self._lyrics_current_line = idx
+                    self.query_one(LyricsOverlay).update_current_line(idx)
 
     async def _load_playlists_live(self) -> None:
         self._alert("load_playlists_live start")
@@ -380,6 +405,79 @@ class AppleMusicApp(App):
         picker = self.query_one(AirPlayPicker)
         picker.expanded = not picker.expanded
 
+    def action_toggle_lyrics(self) -> None:
+        self._lyrics_visible = not self._lyrics_visible
+        overlay = self.query_one(LyricsOverlay)
+        overlay.set_class(self._lyrics_visible, "visible")
+        if self._lyrics_visible:
+            overlay._center()
+            state = self._last_state
+            if state and state["track"]:
+                if state["track"] != self._lyrics_track or state["artist"] != self._lyrics_artist:
+                    self._lyrics_current_line = -1
+                    self.run_worker(self._load_lyrics(), group="lyrics")
+
+    def action_close_overlay(self) -> None:
+        if self._lyrics_visible:
+            self._lyrics_visible = False
+            self.query_one(LyricsOverlay).remove_class("visible")
+
+    async def _load_lyrics(self) -> None:
+        state = self._last_state
+        if not state or not state["track"]:
+            return
+        track, artist, album = state["track"], state["artist"], state["album"]
+        duration = state["duration"]
+
+        self._lyrics_loading = True
+        overlay = self.query_one(LyricsOverlay)
+        overlay.show_loading(track, artist)
+
+        try:
+            # Check cache first
+            cached = None
+            if self._cache is not None:
+                cached = self._cache.get_lyrics(track, artist, album)
+
+            if cached is not None:
+                synced = cached["synced_lyrics"]
+                plain = cached["plain_lyrics"]
+            else:
+                # Fetch from lrclib.net
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, fetch_lyrics, track, artist, album, duration
+                )
+                synced = result["synced_lyrics"]
+                plain = result["plain_lyrics"]
+                # Cache the result (including "not found")
+                if self._cache is not None:
+                    await loop.run_in_executor(
+                        None, self._cache.store_lyrics, track, artist, album, synced, plain
+                    )
+
+            self._lyrics_track = track
+            self._lyrics_artist = artist
+
+            if synced:
+                self._parsed_lyrics = parse_lrc(synced)
+                self._lyrics_synced = True
+                lines = [text for _, text in self._parsed_lyrics]
+            elif plain:
+                lines = plain.splitlines()
+                self._parsed_lyrics = None
+                self._lyrics_synced = False
+            else:
+                overlay.show_no_lyrics(track, artist)
+                self._parsed_lyrics = None
+                self._lyrics_synced = False
+                return
+
+            overlay.set_lyrics(track, artist, lines)
+            self._lyrics_current_line = -1
+        finally:
+            self._lyrics_loading = False
+
     async def on_air_play_picker_picker_opened(self, message: AirPlayPicker.PickerOpened) -> None:
         devices = await self.client.get_airplay_devices()
         self.query_one(AirPlayPicker).devices = devices
@@ -401,6 +499,7 @@ class AppleMusicApp(App):
             "  [b]tab[/b]       Toggle playlists / albums\n"
             "  [b]a[/b]         Toggle album sort (title / artist)\n"
             "  [b]o[/b]         AirPlay output\n"
+            "  [b]y[/b]         Lyrics\n"
             "  [b]t[/b]         Cycle theme\n"
             "  [b]+[/b] / [b]=[/b]   Volume up 5\n"
             "  [b]-[/b]         Volume down 5\n"
