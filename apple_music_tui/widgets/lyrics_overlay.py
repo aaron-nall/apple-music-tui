@@ -37,7 +37,7 @@ class LyricsOverlay(VerticalScroll):
     }
     LyricsOverlay .lyrics-line.--current {
         text-style: bold;
-        color: $text;
+        color: $accent;
     }
     LyricsOverlay .lyrics-status {
         width: 100%;
@@ -68,32 +68,31 @@ class LyricsOverlay(VerticalScroll):
         except Exception:
             pass
 
-    def _clear_content(self) -> None:
+    async def _clear_content(self) -> None:
         """Remove all children."""
-        for child in list(self.children):
-            child.remove()
+        await self.remove_children()
         self._current_idx = -1
         self._line_count = 0
 
-    def show_loading(self, track: str, artist: str) -> None:
+    async def show_loading(self, track: str, artist: str) -> None:
         """Display loading state."""
-        self._clear_content()
-        self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
-        self.mount(Label("Loading lyrics\u2026", classes="lyrics-status"))
+        await self._clear_content()
+        await self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
+        await self.mount(Label("Loading lyrics\u2026", classes="lyrics-status"))
 
-    def show_no_lyrics(self, track: str, artist: str) -> None:
+    async def show_no_lyrics(self, track: str, artist: str) -> None:
         """Display no-lyrics-found state."""
-        self._clear_content()
-        self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
-        self.mount(Label("No lyrics available", classes="lyrics-status"))
+        await self._clear_content()
+        await self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
+        await self.mount(Label("No lyrics available", classes="lyrics-status"))
 
-    def set_lyrics(self, track: str, artist: str, lines: list[str]) -> None:
+    async def set_lyrics(self, track: str, artist: str, lines: list[str]) -> None:
         """Populate the overlay with lyric lines."""
-        self._clear_content()
-        self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
+        await self._clear_content()
+        await self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
         for i, line in enumerate(lines):
             text = line if line.strip() else " "
-            self.mount(Label(text, id=f"lyrics-line-{i}", classes="lyrics-line"))
+            await self.mount(Label(text, id=f"lyrics-line-{i}", classes="lyrics-line"))
         self._line_count = len(lines)
         self.scroll_home(animate=False)
 

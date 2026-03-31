@@ -403,10 +403,16 @@ class AppleMusicApp(App):
 
     def action_toggle_airplay(self) -> None:
         picker = self.query_one(AirPlayPicker)
-        picker.expanded = not picker.expanded
+        opening = not picker.expanded
+        if opening and self._lyrics_visible:
+            self._lyrics_visible = False
+            self.query_one(LyricsOverlay).remove_class("visible")
+        picker.expanded = opening
 
     def action_toggle_lyrics(self) -> None:
         self._lyrics_visible = not self._lyrics_visible
+        if self._lyrics_visible:
+            self.query_one(AirPlayPicker).expanded = False
         overlay = self.query_one(LyricsOverlay)
         overlay.set_class(self._lyrics_visible, "visible")
         if self._lyrics_visible:
@@ -431,7 +437,7 @@ class AppleMusicApp(App):
 
         self._lyrics_loading = True
         overlay = self.query_one(LyricsOverlay)
-        overlay.show_loading(track, artist)
+        await overlay.show_loading(track, artist)
 
         try:
             # Check cache first
@@ -468,17 +474,20 @@ class AppleMusicApp(App):
                 self._parsed_lyrics = None
                 self._lyrics_synced = False
             else:
-                overlay.show_no_lyrics(track, artist)
+                await overlay.show_no_lyrics(track, artist)
                 self._parsed_lyrics = None
                 self._lyrics_synced = False
                 return
 
-            overlay.set_lyrics(track, artist, lines)
+            await overlay.set_lyrics(track, artist, lines)
             self._lyrics_current_line = -1
         finally:
             self._lyrics_loading = False
 
     async def on_air_play_picker_picker_opened(self, message: AirPlayPicker.PickerOpened) -> None:
+        if self._lyrics_visible:
+            self._lyrics_visible = False
+            self.query_one(LyricsOverlay).remove_class("visible")
         devices = await self.client.get_airplay_devices()
         self.query_one(AirPlayPicker).devices = devices
 
