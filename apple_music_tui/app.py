@@ -550,6 +550,11 @@ class AppleMusicApp(App):
             await self.run_action(action)
             self.screen.set_focus(None)
 
+    async def on_lyrics_overlay_lyric_line_clicked(self, message: LyricsOverlay.LyricLineClicked) -> None:
+        if self._lyrics_synced and self._parsed_lyrics is not None:
+            timestamp = self._parsed_lyrics[message.line_index][0]
+            await self.client.set_position(timestamp)
+
     async def on_now_playing_seek_request(self, message: NowPlaying.SeekRequest) -> None:
         await self.client.set_position(message.position)
 

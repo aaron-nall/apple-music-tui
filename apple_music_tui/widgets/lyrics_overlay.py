@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from textual.containers import VerticalScroll
 from textual.app import ComposeResult
-from textual.events import Resize
+from textual.events import Click, Resize
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
@@ -95,6 +96,24 @@ class LyricsOverlay(VerticalScroll):
             await self.mount(Label(text, id=f"lyrics-line-{i}", classes="lyrics-line"))
         self._line_count = len(lines)
         self.scroll_home(animate=False)
+
+    class LyricLineClicked(Message):
+        """Posted when a lyric line is clicked."""
+
+        def __init__(self, line_index: int) -> None:
+            super().__init__()
+            self.line_index = line_index
+
+    def on_click(self, event: Click) -> None:
+        """Handle clicks on lyric lines to support seek."""
+        widget = event.control
+        if widget is not None and widget.id and widget.id.startswith("lyrics-line-"):
+            try:
+                index = int(widget.id.removeprefix("lyrics-line-"))
+            except ValueError:
+                return
+            self.post_message(self.LyricLineClicked(index))
+            event.stop()
 
     def update_current_line(self, index: int) -> None:
         """Highlight the current line and scroll it into view."""
