@@ -49,7 +49,7 @@ class AppleMusicApp(App):
         Binding("s", "toggle_shuffle", "Shuffle"),
         Binding("r", "cycle_repeat", "Repeat"),
         Binding("t", "cycle_theme", "Theme"),
-        Binding("plus,equal", "volume_up", "Vol+"),
+        Binding("plus,equals_sign", "volume_up", "Vol+"),
         Binding("minus", "volume_down", "Vol-"),
         Binding("a", "toggle_album_sort", "Sort Albums"),
         Binding("o", "toggle_airplay", "AirPlay"),
