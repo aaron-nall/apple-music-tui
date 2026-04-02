@@ -77,6 +77,7 @@ class AppleMusicApp(App):
         self._album_artist: str = ""  # artist of the album currently being played
         self._album_track_list: list[str] = []  # ordered track names for the album
         self._album_track_idx: int = 0  # current index in _album_track_list
+        self._album_awaiting_play: bool = False  # True after advancing, until "playing" seen
         # Lyrics state
         self._lyrics_visible: bool = False
         self._lyrics_track: str = ""
@@ -139,7 +140,6 @@ class AppleMusicApp(App):
             ctrl.volume = state["volume"]
 
             browser = self.query_one(PlaylistBrowser)
-            browser.set_current_track(state["track"], state.get("album"))
 
             # Refresh lyrics if track changed while overlay is open
             if self._lyrics_visible and not self._lyrics_loading:
@@ -148,17 +148,37 @@ class AppleMusicApp(App):
                     self.run_worker(self._load_lyrics(), group="lyrics")
 
             # Album continuation: if we started album playback and it stopped,
-            # advance to the next track in the album.
+            # advance to the next track in the album.  The _album_awaiting_play
+            # flag prevents a second "stopped" poll from double-advancing or
+            # prematurely clearing _album_playing before the new track starts.
             if self._album_playing and self._album_track_list:
-                if state["state"] == "stopped" and self._album_track_idx < len(self._album_track_list) - 1:
-                    self._album_track_idx += 1
-                    self._alert(f"album continue: track {self._album_track_idx + 1}/{len(self._album_track_list)}")
-                    next_track_name = self._album_track_list[self._album_track_idx]
-                    await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, next_track_name, self._album_artist)
-                elif state["state"] == "stopped":
-                    self._album_playing = ""  # reached end of album
-                elif state["state"] == "playing" and state["track"] in self._album_track_list:
-                    self._album_track_idx = self._album_track_list.index(state["track"])
+                if state["state"] == "playing":
+                    self._album_awaiting_play = False
+                    if state["track"] in self._album_track_list:
+                        # Use current index if it still matches to handle duplicate track names;
+                        # otherwise find the next matching index after the current position.
+                        track = state["track"]
+                        if self._album_track_list[self._album_track_idx] != track:
+                            for i, name in enumerate(self._album_track_list):
+                                if name == track and i >= self._album_track_idx:
+                                    self._album_track_idx = i
+                                    break
+                            else:
+                                self._album_track_idx = next(
+                                    i for i, name in enumerate(self._album_track_list) if name == track
+                                )
+                elif state["state"] == "stopped" and not self._album_awaiting_play:
+                    if self._album_track_idx < len(self._album_track_list) - 1:
+                        self._album_track_idx += 1
+                        self._album_awaiting_play = True
+                        self._alert(f"album continue: track {self._album_track_idx + 1}/{len(self._album_track_list)}")
+                        next_track_name = self._album_track_list[self._album_track_idx]
+                        await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, next_track_name, self._album_artist)
+                    else:
+                        self._album_playing = ""  # reached end of album
+
+            track_index = state.get("track_index") or (self._album_track_idx + 1 if self._album_playing else None)
+            browser.set_current_track(state["track"], state.get("album"), track_index)
 
             # Auto-expand the currently playing playlist or album
             if browser._mode == "playlists":
@@ -325,6 +345,7 @@ class AppleMusicApp(App):
         self._album_artist = artist
         self._album_track_list = tracks
         self._album_track_idx = start_idx
+        self._album_awaiting_play = False
         return tracks
 
     async def on_playlist_browser_album_selected(

@@ -83,7 +83,12 @@ tell application "Music"
     on error
         set plName to ""
     end try
-    return "STATE: " & pState & return & "TRACK: " & tName & return & "ARTIST: " & tArtist & return & "ALBUM: " & tAlbum & return & "POSITION: " & (pPos as string) & return & "DURATION: " & (tDur as string) & return & "VOLUME: " & (sVol as string) & return & "SHUFFLE: " & shufStr & return & "REPEAT: " & rep & return & "PLAYLIST: " & plName
+    try
+        set tIdx to index of current track
+    on error
+        set tIdx to 0
+    end try
+    return "STATE: " & pState & return & "TRACK: " & tName & return & "ARTIST: " & tArtist & return & "ALBUM: " & tAlbum & return & "POSITION: " & (pPos as string) & return & "DURATION: " & (tDur as string) & return & "VOLUME: " & (sVol as string) & return & "SHUFFLE: " & shufStr & return & "REPEAT: " & rep & return & "PLAYLIST: " & plName & return & "TRACKIDX: " & (tIdx as string)
 end tell"""
 
     async def _run(self, script: str, timeout: float = 5.0) -> str | None:
@@ -172,6 +177,7 @@ end tell"""
             "shuffle": data.get("SHUFFLE", "off").strip().lower() == "on",
             "repeat": repeat_mode,
             "current_playlist": data.get("PLAYLIST", ""),
+            "track_index": to_int(data.get("TRACKIDX", "0")),
         }
 
     async def play_pause(self) -> None:

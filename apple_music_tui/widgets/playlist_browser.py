@@ -71,6 +71,7 @@ class PlaylistBrowser(Widget):
         # Shared state
         self._current_track: str | None = None
         self._current_album: str | None = None
+        self._current_track_index: int | None = None  # 1-based; disambiguates duplicate track names
         # Each entry: {"type": "playlist"|"track"|"album", "name": str, "track_index": int, "album_name": str}
         self._flat_items: list[dict] = []
         self._highlighted_idx: int | None = None
@@ -155,11 +156,12 @@ class PlaylistBrowser(Widget):
 
     # --- Shared methods ---
 
-    def set_current_track(self, track_name: str | None, album_name: str | None = None) -> None:
-        if track_name == self._current_track and album_name == self._current_album:
+    def set_current_track(self, track_name: str | None, album_name: str | None = None, track_index: int | None = None) -> None:
+        if track_name == self._current_track and album_name == self._current_album and track_index == self._current_track_index:
             return
         self._current_track = track_name
         self._current_album = album_name
+        self._current_track_index = track_index
         self._update_track_highlight()
 
     def _rebuild_list(self) -> None:
@@ -222,6 +224,8 @@ class PlaylistBrowser(Widget):
             if meta["type"] != "track" or meta["name"] != self._current_track:
                 continue
             if self._mode == "albums" and self._current_album and meta.get("album_name") != self._current_album:
+                continue
+            if self._current_track_index is not None and meta.get("track_index") != self._current_track_index:
                 continue
             new_idx = i
             break
