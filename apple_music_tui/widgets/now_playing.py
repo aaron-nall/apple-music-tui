@@ -57,7 +57,7 @@ class ScrollingLabel(Widget):
             self._delay += 1
             return
         full = self.text + self._SEP
-        self._offset = (self._offset + 1) % len(full)
+        self._offset = (self._offset + 1) % cell_len(full)
         self.refresh()
 
     def render(self) -> Text:
