@@ -192,8 +192,10 @@ class PlaylistBrowser(Widget):
                     self._flat_items.append({"type": "track", "name": track, "track_index": i})
 
         if self._expanded_playlist in self._playlist_names:
-            pl_row = self._playlist_names.index(self._expanded_playlist)
-            self.call_after_refresh(lv.scroll_to, 0, pl_row, animate=False)
+            for idx, meta in enumerate(self._flat_items):
+                if meta["type"] == "playlist" and meta["name"] == self._expanded_playlist:
+                    self.call_after_refresh(lv.scroll_to, 0, idx, animate=False)
+                    break
 
     def _build_album_list(self, lv: ListView) -> None:
         if self._album_sort == "artist":
