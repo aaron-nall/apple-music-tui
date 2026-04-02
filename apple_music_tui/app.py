@@ -279,7 +279,7 @@ class AppleMusicApp(App):
                 return
         self._syncing = True
         self._alert("sync_library start (AppleScript bulk fetch)")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             tracks = await self.client.get_all_tracks()
             self._alert(f"sync_library fetched {len(tracks)} tracks")
@@ -471,7 +471,7 @@ class AppleMusicApp(App):
                 plain = cached["plain_lyrics"]
             else:
                 # Fetch from lrclib.net
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
                     None, fetch_lyrics, track, artist, album, duration
                 )
