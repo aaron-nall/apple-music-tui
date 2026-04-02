@@ -459,6 +459,8 @@ class AppleMusicApp(App):
         track, artist, album = state["track"], state["artist"], state["album"]
         duration = state["duration"]
 
+        self._lyrics_track = track
+        self._lyrics_artist = artist
         self._lyrics_loading = True
         overlay = self.query_one(LyricsOverlay)
         await overlay.show_loading(track, artist)
@@ -485,9 +487,6 @@ class AppleMusicApp(App):
                     await loop.run_in_executor(
                         None, self._cache.store_lyrics, track, artist, album, synced, plain
                     )
-
-            self._lyrics_track = track
-            self._lyrics_artist = artist
 
             if synced:
                 self._parsed_lyrics = parse_lrc(synced)
