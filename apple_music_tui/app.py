@@ -448,6 +448,9 @@ class AppleMusicApp(App):
         if self._lyrics_visible:
             self._lyrics_visible = False
             self.query_one(LyricsOverlay).remove_class("visible")
+        picker = self.query_one(AirPlayPicker)
+        if picker.expanded:
+            picker.expanded = False
 
     async def _load_lyrics(self) -> None:
         state = self._last_state
