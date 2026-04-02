@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from apple_music_tui.config import CONFIG_DIR
@@ -11,6 +11,7 @@ from apple_music_tui.config import CONFIG_DIR
 _log = logging.getLogger(__name__)
 
 DB_PATH = CONFIG_DIR / "library_cache.db"
+LYRICS_CACHE_TTL = timedelta(days=30)
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS tracks (
@@ -128,14 +129,21 @@ class LibraryCache:
             )
 
     def get_lyrics(self, track: str, artist: str, album: str) -> dict | None:
-        """Return cached lyrics or None if not cached."""
+        """Return cached lyrics or None if not cached or expired."""
         row = self._conn.execute(
-            "SELECT synced_lyrics, plain_lyrics FROM lyrics WHERE track_name = ? AND artist = ? AND album = ?",
+            "SELECT synced_lyrics, plain_lyrics, fetched_at FROM lyrics WHERE track_name = ? AND artist = ? AND album = ?",
             (track, artist, album),
         ).fetchone()
         if row is None:
             return None
-        return {"synced_lyrics": row[0] or None, "plain_lyrics": row[1] or None}
+        synced, plain, fetched_at_str = row
+        try:
+            fetched_at = datetime.fromisoformat(fetched_at_str)
+            if datetime.now(timezone.utc) - fetched_at > LYRICS_CACHE_TTL:
+                return None
+        except ValueError:
+            return None
+        return {"synced_lyrics": synced or None, "plain_lyrics": plain or None}
 
     def store_lyrics(
         self, track: str, artist: str, album: str, synced: str | None, plain: str | None
