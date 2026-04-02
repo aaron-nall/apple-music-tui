@@ -271,16 +271,16 @@ class AppleMusicApp(App):
     async def _sync_library(self) -> None:
         if self._syncing or self._cache is None:
             return
-        last = self._cache.get_last_sync()
-        if last is not None:
-            age = (datetime.now(timezone.utc) - last).total_seconds()
-            if age < 300:  # skip if synced less than 5 minutes ago
-                self._alert(f"sync_library skipped (last sync {age:.0f}s ago)")
-                return
         self._syncing = True
-        self._alert("sync_library start (AppleScript bulk fetch)")
-        loop = asyncio.get_running_loop()
         try:
+            last = self._cache.get_last_sync()
+            if last is not None:
+                age = (datetime.now(timezone.utc) - last).total_seconds()
+                if age < 300:  # skip if synced less than 5 minutes ago
+                    self._alert(f"sync_library skipped (last sync {age:.0f}s ago)")
+                    return
+            self._alert("sync_library start (AppleScript bulk fetch)")
+            loop = asyncio.get_running_loop()
             tracks = await self.client.get_all_tracks()
             self._alert(f"sync_library fetched {len(tracks)} tracks")
             if tracks:
