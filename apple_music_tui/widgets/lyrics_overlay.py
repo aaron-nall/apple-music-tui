@@ -8,6 +8,8 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
+from rich.text import Text
+
 
 class LyricsOverlay(VerticalScroll):
     """Full-screen centered overlay for displaying lyrics."""
@@ -40,6 +42,13 @@ class LyricsOverlay(VerticalScroll):
         text-style: bold;
         color: $accent;
     }
+    LyricsOverlay .lyrics-gap-line {
+        width: 100%;
+        color: $text-muted;
+    }
+    LyricsOverlay .lyrics-gap-line.--current {
+        color: $accent;
+    }
     LyricsOverlay .lyrics-status {
         width: 100%;
         color: $text-muted;
@@ -52,6 +61,7 @@ class LyricsOverlay(VerticalScroll):
         self._current_idx: int = -1
         self._line_count: int = 0
         self._lines: list[str] = []
+        self._gap_indices: set[int] = set()
 
     def on_mount(self) -> None:
         self._center()
@@ -76,6 +86,7 @@ class LyricsOverlay(VerticalScroll):
         self._current_idx = -1
         self._line_count = 0
         self._lines = []
+        self._gap_indices = set()
 
     async def show_loading(self, track: str, artist: str) -> None:
         """Display loading state."""
@@ -89,13 +100,19 @@ class LyricsOverlay(VerticalScroll):
         await self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
         await self.mount(Label("No lyrics available", classes="lyrics-status"))
 
-    async def set_lyrics(self, track: str, artist: str, lines: list[str]) -> None:
+    async def set_lyrics(
+        self, track: str, artist: str, lines: list[str], gap_indices: set[int] | None = None
+    ) -> None:
         """Populate the overlay with lyric lines."""
         await self._clear_content()
+        self._gap_indices = set(gap_indices) if gap_indices else set()
         await self.mount(Label(f"{track} \u2014 {artist}", classes="lyrics-title"))
         for i, line in enumerate(lines):
-            text = line if line.strip() else " "
-            await self.mount(Label(text, id=f"lyrics-line-{i}", classes="lyrics-line"))
+            if i in self._gap_indices:
+                await self.mount(Label("", id=f"lyrics-line-{i}", classes="lyrics-gap-line"))
+            else:
+                text = line if line.strip() else " "
+                await self.mount(Label(text, id=f"lyrics-line-{i}", classes="lyrics-line"))
         self._line_count = len(lines)
         self._lines = lines
         self.scroll_home(animate=False)
@@ -127,6 +144,8 @@ class LyricsOverlay(VerticalScroll):
             try:
                 prev = self.query_one(f"#lyrics-line-{self._current_idx}", Label)
                 prev.remove_class("--current")
+                if self._current_idx in self._gap_indices:
+                    prev.update("")
             except Exception:
                 pass
         self._current_idx = index
@@ -147,3 +166,13 @@ class LyricsOverlay(VerticalScroll):
                 scroll_target.scroll_visible(animate=False)
             except Exception:
                 pass
+
+    _GAP_FRAMES = ("- - -", "* - -", "* * -", "* * *")
+
+    def update_gap_animation(self, idx: int, frame: int) -> None:
+        """Update the gap indicator to the given animation frame (0-3)."""
+        try:
+            label = self.query_one(f"#lyrics-line-{idx}", Label)
+            label.update(self._GAP_FRAMES[frame])
+        except Exception:
+            pass

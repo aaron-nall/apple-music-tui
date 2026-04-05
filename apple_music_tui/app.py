@@ -13,7 +13,9 @@ from textual.widgets import Button, Tabs
 
 from apple_music_tui.config import load_config
 from apple_music_tui.library_cache import LibraryCache
-from apple_music_tui.lyrics import fetch_lyrics, find_current_line, parse_lrc
+from apple_music_tui.lyrics import (
+    GAP_SENTINEL, fetch_lyrics, find_current_line, insert_gap_lines, parse_lrc,
+)
 from apple_music_tui.music_client import MusicClient, MusicState
 from apple_music_tui.themes import CUSTOM_THEMES
 from apple_music_tui.widgets.airplay_picker import AirPlayOverlay, AirPlayPicker
@@ -86,6 +88,9 @@ class AppleMusicApp(App):
         self._lyrics_synced: bool = False
         self._lyrics_current_line: int = -1
         self._lyrics_loading: bool = False
+        self._gap_lines: set[int] = set()
+        self._gap_end_times: dict[int, float] = {}
+        self._last_gap_bold_count: int = -1
 
     def _alert(self, msg: str) -> None:
         elapsed = time.monotonic() - self._t0
@@ -230,7 +235,19 @@ class AppleMusicApp(App):
                 idx = find_current_line(self._parsed_lyrics, interpolated)
                 if idx != self._lyrics_current_line:
                     self._lyrics_current_line = idx
+                    self._last_gap_bold_count = -1
                     self.query_one(LyricsOverlay).update_current_line(idx)
+                # Gap animation update
+                if idx in self._gap_lines and idx in self._gap_end_times:
+                    gap_start = self._parsed_lyrics[idx][0]
+                    gap_end = self._gap_end_times[idx]
+                    gap_duration = gap_end - gap_start
+                    if gap_duration > 0:
+                        frac = max(0.0, min(1.0, (interpolated - gap_start) / gap_duration))
+                        frame = min(3, int(frac * 4))
+                        if frame != self._last_gap_bold_count:
+                            self._last_gap_bold_count = frame
+                            self.query_one(LyricsOverlay).update_gap_animation(idx, frame)
 
     async def _load_playlists_live(self) -> None:
         self._alert("load_playlists_live start")
@@ -489,20 +506,36 @@ class AppleMusicApp(App):
                     )
 
             if synced:
-                self._parsed_lyrics = parse_lrc(synced)
+                self._parsed_lyrics = insert_gap_lines(parse_lrc(synced))
                 self._lyrics_synced = True
-                lines = [text for _, text in self._parsed_lyrics]
+                # Compute gap metadata
+                self._gap_lines = set()
+                self._gap_end_times = {}
+                for i, (ts, text) in enumerate(self._parsed_lyrics):
+                    if text == GAP_SENTINEL:
+                        self._gap_lines.add(i)
+                        for j in range(i + 1, len(self._parsed_lyrics)):
+                            if self._parsed_lyrics[j][1] != GAP_SENTINEL:
+                                self._gap_end_times[i] = self._parsed_lyrics[j][0]
+                                break
+                lines = ["" if text == GAP_SENTINEL else text for _, text in self._parsed_lyrics]
             elif plain:
                 lines = plain.splitlines()
                 self._parsed_lyrics = None
                 self._lyrics_synced = False
+                self._gap_lines = set()
+                self._gap_end_times = {}
+                self._last_gap_bold_count = -1
             else:
                 await overlay.show_no_lyrics(track, artist)
                 self._parsed_lyrics = None
                 self._lyrics_synced = False
+                self._gap_lines = set()
+                self._gap_end_times = {}
+                self._last_gap_bold_count = -1
                 return
 
-            await overlay.set_lyrics(track, artist, lines)
+            await overlay.set_lyrics(track, artist, lines, gap_indices=self._gap_lines)
             self._lyrics_current_line = -1
         finally:
             self._lyrics_loading = False
