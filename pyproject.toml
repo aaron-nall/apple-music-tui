@@ -13,6 +13,9 @@ apple-music-tui = "apple_music_tui.main:main"
 python = "^3.11"
 textual = "^1.0.0"
 pydantic-settings = ">=2.0"
+pyobjc-core = { version = ">=10.0", markers = "sys_platform == 'darwin'" }
+pyobjc-framework-AVFoundation = { version = ">=10.0", markers = "sys_platform == 'darwin'" }
+pyobjc-framework-screencapturekit = "^12.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"
