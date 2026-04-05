@@ -10,6 +10,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Label
 
 from apple_music_tui.widgets.airplay_picker import AirPlayPicker
+from apple_music_tui.widgets.vu_meter import VUMeter
 
 
 class VolumeBar(Widget):
@@ -145,7 +146,7 @@ class Controls(Widget):
     def compose(self) -> ComposeResult:
         with Horizontal(id="control-row"):
             yield AirPlayPicker()
-            yield Label("", classes="control-spacer")
+            yield VUMeter()
             yield Button("\u21c4", id="btn-shuffle")
             yield Button("|\u25c0\u25c0", id="btn-prev")
             yield Button("\u25b6", id="btn-play")
