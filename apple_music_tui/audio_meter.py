@@ -134,13 +134,13 @@ if _PYOBJC_AVAILABLE and _SCK_AVAILABLE:
                 # Pass the ctypes array directly — avoids a full buffer copy
                 floats = struct.unpack_from(f'{n_floats}f', raw_buf)
                 # Interleaved stereo: L, R, L, R, …
-                ss = [0.0, 0.0]
-                counts = [0, 0]
-                for i, v in enumerate(floats):
-                    ch = i % 2
-                    ss[ch] += v * v
-                    counts[ch] += 1
-                rms = [_rms(ss[c], counts[c]) for c in range(2)]
+                # Tuple step-slicing runs in C, splitting channels without a Python loop.
+                left = floats[::2]
+                right = floats[1::2]
+                rms = [
+                    _rms(sum(v * v for v in left), len(left)),
+                    _rms(sum(v * v for v in right), len(right)),
+                ]
                 with self._lock:
                     self._levels[0] = rms[0]
                     self._levels[1] = rms[1]
