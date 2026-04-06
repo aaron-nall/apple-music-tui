@@ -182,7 +182,7 @@ class AppleMusicApp(App):
                     else:
                         self._album_playing = ""  # reached end of album
 
-            track_index = state.get("track_index") or (self._album_track_idx + 1 if self._album_playing else None)
+            track_index = (self._album_track_idx + 1) if self._album_playing else (state.get("track_index") or None)
             browser.set_current_track(state["track"], state.get("album"), track_index)
 
             # Auto-expand the currently playing playlist or album
@@ -373,6 +373,7 @@ class AppleMusicApp(App):
         await self.client.play_album(name, artist)
         tracks = await self._start_album_continuation(name, 0, artist)
         self.query_one(PlaylistBrowser).expand_album(name, tracks, artist)
+        self._last_known_album = name
 
     async def on_playlist_browser_album_track_selected(
         self, message: PlaylistBrowser.AlbumTrackSelected
