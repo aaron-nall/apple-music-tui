@@ -98,8 +98,10 @@ end tell"""
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             if proc.returncode != 0:
+                if stderr:
+                    _log.debug("osascript error: %s", stderr.decode(errors="replace").strip())
                 return None
             return stdout.decode().strip()
         except (asyncio.TimeoutError, OSError, UnicodeDecodeError) as exc:
