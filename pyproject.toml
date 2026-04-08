@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "apple-music-tui"
-version = "0.2.1"
+version = "0.2.2"
 description = "A minimal TUI for controlling Apple Music via osascript"
 authors = []
 readme = "README.md"

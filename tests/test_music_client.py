@@ -196,10 +196,12 @@ class TestGetPlaylists:
         client._run = AsyncMock(return_value="")
         assert await client.get_playlists() == []
 
-    async def test_strips_whitespace_from_names(self, client: MusicClient) -> None:
-        client._run = AsyncMock(return_value=" Chill |||  Jazz  |||")
+    async def test_preserves_playlist_names_verbatim(self, client: MusicClient) -> None:
+        # Names are returned as-is so lookups using the exact name succeed.
+        # e.g. an Apple Music playlist named "Disturbed " with a trailing space.
+        client._run = AsyncMock(return_value="Chill|||Jazz |||")
         playlists = await client.get_playlists()
-        assert playlists == ["Chill", "Jazz"]
+        assert playlists == ["Chill", "Jazz "]
 
 
 class TestGetPlaylistTracks:

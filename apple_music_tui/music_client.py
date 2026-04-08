@@ -210,7 +210,7 @@ end tell"""
 tell application "Music"
     set d to "|||"
     set output to ""
-    repeat with pl in (every playlist whose special kind is none)
+    repeat with pl in (every user playlist)
         set output to output & (name of pl as string) & d
     end repeat
     return output
@@ -218,13 +218,13 @@ end tell"""
         raw = await self._run(script)
         if not raw:
             return []
-        return [p.strip() for p in raw.split(self._DELIM) if p.strip() and p.strip() != "Music Videos" ]
+        return [p for p in raw.split(self._DELIM) if p.strip()]
 
     async def play_playlist(self, name: str) -> None:
         escaped = name.replace("\\", "\\\\").replace('"', '\\"')
         script = f"""\
 tell application "Music"
-    set matchedPL to first playlist whose name is "{escaped}"
+    set matchedPL to first user playlist whose name is "{escaped}"
     play matchedPL
 end tell"""
         await self._run(script)
@@ -235,31 +235,31 @@ end tell"""
 tell application "Music"
     set d to "|||"
     set output to ""
-    set matchedPL to first playlist whose name is "{escaped}"
-    repeat with t in (every track of matchedPL)
-        set output to output & (name of t as string) & d
-    end repeat
+    set matchedPL to first user playlist whose name is "{escaped}"
+    if special kind of matchedPL is folder then
+        repeat with childPL in (every user playlist whose parent is matchedPL)
+            repeat with t in (every track of childPL)
+                set output to output & (name of t as string) & d
+            end repeat
+        end repeat
+    else
+        repeat with t in (every track of matchedPL)
+            set output to output & (name of t as string) & d
+        end repeat
+    end if
     return output
 end tell"""
-        raw = await self._run(script)
+        raw = await self._run(script, timeout=15.0)
         if not raw:
             return []
         return [t.strip() for t in raw.split(self._DELIM) if t.strip()]
 
     async def play_playlist_track(self, playlist_name: str, track_index: int) -> None:
         escaped = playlist_name.replace("\\", "\\\\").replace('"', '\\"')
-        skips = track_index - 1
         script = f"""\
 tell application "Music"
-    set matchedPL to first playlist whose name is "{escaped}"
-    play matchedPL
-    delay 0.3
-    pause
-    repeat {skips} times
-        delay 0.1
-        next track
-    end repeat
-    play
+    set matchedPL to first user playlist whose name is "{escaped}"
+    play track {track_index} of matchedPL
 end tell"""
         await self._run(script)
 
