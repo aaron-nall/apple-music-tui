@@ -16,8 +16,22 @@ _LRC_RE = re.compile(r"^\[(\d{2}):(\d{2})\.(\d{2,3})\]\s?(.*)$")
 GAP_SENTINEL = "\x00"  # Marks a gap pseudo-line in parsed lyrics
 
 
-def fetch_lyrics(track: str, artist: str, album: str, duration: float) -> dict:
-    """Fetch lyrics from lrclib.net (synchronous -- call via run_in_executor)."""
+_HEADERS = {"User-Agent": "apple-music-tui/0.1 (https://github.com)"}
+
+
+def _extract_lyrics(data: dict) -> dict:
+    """Pull synced/plain lyrics from an lrclib response object."""
+    return {
+        "synced_lyrics": data.get("syncedLyrics") or None,
+        "plain_lyrics": data.get("plainLyrics") or None,
+    }
+
+
+_EMPTY = {"synced_lyrics": None, "plain_lyrics": None}
+
+
+def _get_exact(track: str, artist: str, album: str, duration: float) -> dict | None:
+    """Try the /api/get exact-match endpoint. Returns None on miss."""
     params = urlencode({
         "track_name": track,
         "artist_name": artist,
@@ -25,17 +39,72 @@ def fetch_lyrics(track: str, artist: str, album: str, duration: float) -> dict:
         "duration": int(duration),
     })
     url = f"https://lrclib.net/api/get?{params}"
-    req = Request(url, headers={"User-Agent": "apple-music-tui/0.1 (https://github.com)"})
+    req = Request(url, headers=_HEADERS)
     try:
         with urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
-        return {
-            "synced_lyrics": data.get("syncedLyrics") or None,
-            "plain_lyrics": data.get("plainLyrics") or None,
-        }
+        result = _extract_lyrics(data)
+        if result["synced_lyrics"] or result["plain_lyrics"]:
+            return result
     except (HTTPError, URLError, json.JSONDecodeError, OSError) as exc:
-        _log.debug("lrclib.net request failed: %s", exc)
-        return {"synced_lyrics": None, "plain_lyrics": None}
+        _log.debug("lrclib.net exact lookup failed: %s", exc)
+    return None
+
+
+def _search_fallback(track: str, artist: str, duration: float) -> dict | None:
+    """Try the /api/search endpoint for a fuzzy match. Returns None on miss."""
+    params = urlencode({
+        "track_name": track,
+        "artist_name": artist,
+    })
+    url = f"https://lrclib.net/api/search?{params}"
+    req = Request(url, headers=_HEADERS)
+    try:
+        with urlopen(req, timeout=5) as resp:
+            results = json.loads(resp.read().decode())
+        if not results:
+            return None
+        # Prefer a result whose duration is close and that has synced lyrics
+        int_dur = int(duration)
+        best = None
+        best_score = -1
+        for entry in results:
+            score = 0
+            if entry.get("syncedLyrics"):
+                score += 2
+            elif entry.get("plainLyrics"):
+                score += 1
+            else:
+                continue
+            entry_dur = entry.get("duration") or 0
+            if abs(entry_dur - int_dur) <= 3:
+                score += 1
+            if score > best_score:
+                best = entry
+                best_score = score
+        if best:
+            return _extract_lyrics(best)
+    except (HTTPError, URLError, json.JSONDecodeError, OSError) as exc:
+        _log.debug("lrclib.net search failed: %s", exc)
+    return None
+
+
+def fetch_lyrics(track: str, artist: str, album: str, duration: float) -> dict:
+    """Fetch lyrics from lrclib.net (synchronous -- call via run_in_executor).
+
+    Tries an exact match first, then falls back to a search query which
+    tolerates slight metadata differences between Apple Music and lrclib.
+    """
+    result = _get_exact(track, artist, album, duration)
+    if result:
+        return result
+
+    result = _search_fallback(track, artist, duration)
+    if result:
+        _log.debug("lrclib.net: exact miss, search hit for %r by %r", track, artist)
+        return result
+
+    return _EMPTY
 
 
 def parse_lrc(lrc_text: str) -> list[tuple[float, str]]:
