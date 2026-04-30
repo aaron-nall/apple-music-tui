@@ -12,6 +12,7 @@ _log = logging.getLogger(__name__)
 
 DB_PATH = CONFIG_DIR / "library_cache.db"
 LYRICS_CACHE_TTL = timedelta(days=30)
+LYRICS_MISS_TTL = timedelta(days=3)
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS tracks (
@@ -139,7 +140,8 @@ class LibraryCache:
         synced, plain, fetched_at_str = row
         try:
             fetched_at = datetime.fromisoformat(fetched_at_str)
-            if datetime.now(timezone.utc) - fetched_at > LYRICS_CACHE_TTL:
+            ttl = LYRICS_CACHE_TTL if (synced or plain) else LYRICS_MISS_TTL
+            if datetime.now(timezone.utc) - fetched_at > ttl:
                 return None
         except ValueError:
             return None
