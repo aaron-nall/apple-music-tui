@@ -18,6 +18,20 @@ GAP_SENTINEL = "\x00"  # Marks a gap pseudo-line in parsed lyrics
 
 _HEADERS = {"User-Agent": "apple-music-tui/0.1 (https://github.com)"}
 
+# Parenthetical suffixes Apple Music adds that lrclib typically doesn't have.
+_STRIP_SUFFIXES_RE = re.compile(
+    r"\s*\("
+    r"(?:Remastered(?:\s+\d{4})?|Deluxe(?:\s+Edition)?|Bonus\s+Track\s+Version"
+    r"|Anniversary\s+Edition|Expanded\s+Edition|Special\s+Edition)"
+    r"\)\s*",
+    re.IGNORECASE,
+)
+
+
+def _normalize(text: str) -> str:
+    """Strip common Apple Music parenthetical suffixes for better lrclib matching."""
+    return _STRIP_SUFFIXES_RE.sub("", text).strip()
+
 
 def _extract_lyrics(data: dict) -> dict:
     """Pull synced/plain lyrics from an lrclib response object."""
@@ -94,12 +108,22 @@ def fetch_lyrics(track: str, artist: str, album: str, duration: float) -> dict:
 
     Tries an exact match first, then falls back to a search query which
     tolerates slight metadata differences between Apple Music and lrclib.
+    Strips common Apple Music suffixes like (Remastered) before retrying.
     """
     result = _get_exact(track, artist, album, duration)
     if result:
         return result
 
-    result = _search_fallback(track, artist, duration)
+    # Retry exact match with normalized names (strips Remastered, Deluxe, etc.)
+    clean_track = _normalize(track)
+    clean_album = _normalize(album)
+    if clean_track != track or clean_album != album:
+        result = _get_exact(clean_track, artist, clean_album, duration)
+        if result:
+            _log.debug("lrclib.net: hit after normalizing %r -> %r", track, clean_track)
+            return result
+
+    result = _search_fallback(clean_track, artist, duration)
     if result:
         _log.debug("lrclib.net: exact miss, search hit for %r by %r", track, artist)
         return result
