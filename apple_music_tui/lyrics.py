@@ -60,7 +60,7 @@ def _search_fallback(track: str, artist: str, duration: float) -> dict | None:
     url = f"https://lrclib.net/api/search?{params}"
     req = Request(url, headers=_HEADERS)
     try:
-        with urlopen(req, timeout=5) as resp:
+        with urlopen(req, timeout=10) as resp:
             results = json.loads(resp.read().decode())
         if not results:
             return None
