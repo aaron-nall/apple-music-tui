@@ -75,10 +75,13 @@ class TestAudioMeterUnit:
         meter.stop()  # must not raise
 
     def test_context_manager_calls_stop(self):
-        from apple_music_tui.audio_meter import AudioMeter
-        with AudioMeter() as meter:
+        from apple_music_tui.audio_meter import AudioMeter, AudioMeterError
+        try:
+            with AudioMeter() as meter:
+                assert meter.levels == (0.0, 0.0)
             assert meter.levels == (0.0, 0.0)
-        assert meter.levels == (0.0, 0.0)
+        except AudioMeterError:
+            pytest.skip("ScreenCaptureKit not available")
 
     def test_start_without_load_uses_monitor_mode(self):
         # start() without load() should not raise — it enters SCK monitor mode.
