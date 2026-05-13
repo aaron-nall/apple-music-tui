@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from bisect import bisect_right
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -17,6 +18,37 @@ GAP_SENTINEL = "\x00"  # Marks a gap pseudo-line in parsed lyrics
 
 
 _HEADERS = {"User-Agent": "apple-music-tui/0.1 (https://github.com)"}
+
+_EXACT_TIMEOUT = 10.0
+_SEARCH_TIMEOUT = 15.0
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF = 0.5
+
+
+def _request_json(url: str, timeout: float):
+    """GET `url` and return parsed JSON, retrying on transient network errors.
+
+    HTTP error responses (e.g. 404) are not retried — lrclib uses 404 to mean
+    "no match," and a fallback query is the right next step.
+    """
+    req = Request(url, headers=_HEADERS)
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except HTTPError as exc:
+            _log.debug("lrclib.net HTTP %s for %s", exc.code, url)
+            return None
+        except (URLError, TimeoutError, OSError) as exc:
+            if attempt == _MAX_ATTEMPTS:
+                _log.debug("lrclib.net request gave up after %d attempts: %s", attempt, exc)
+                return None
+            _log.debug("lrclib.net request failed (attempt %d/%d): %s", attempt, _MAX_ATTEMPTS, exc)
+            time.sleep(_RETRY_BACKOFF * attempt)
+        except json.JSONDecodeError as exc:
+            _log.debug("lrclib.net returned invalid JSON: %s", exc)
+            return None
+    return None
 
 # Parenthetical suffixes Apple Music adds that lrclib typically doesn't have.
 _STRIP_SUFFIXES_RE = re.compile(
@@ -52,16 +84,12 @@ def _get_exact(track: str, artist: str, album: str, duration: float) -> dict | N
         "album_name": album,
         "duration": int(duration),
     })
-    url = f"https://lrclib.net/api/get?{params}"
-    req = Request(url, headers=_HEADERS)
-    try:
-        with urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-        result = _extract_lyrics(data)
-        if result["synced_lyrics"] or result["plain_lyrics"]:
-            return result
-    except (HTTPError, URLError, json.JSONDecodeError, OSError) as exc:
-        _log.debug("lrclib.net exact lookup failed: %s", exc)
+    data = _request_json(f"https://lrclib.net/api/get?{params}", _EXACT_TIMEOUT)
+    if not isinstance(data, dict):
+        return None
+    result = _extract_lyrics(data)
+    if result["synced_lyrics"] or result["plain_lyrics"]:
+        return result
     return None
 
 
@@ -71,35 +99,29 @@ def _search_fallback(track: str, artist: str, duration: float) -> dict | None:
         "track_name": track,
         "artist_name": artist,
     })
-    url = f"https://lrclib.net/api/search?{params}"
-    req = Request(url, headers=_HEADERS)
-    try:
-        with urlopen(req, timeout=10) as resp:
-            results = json.loads(resp.read().decode())
-        if not results:
-            return None
-        # Prefer a result whose duration is close and that has synced lyrics
-        int_dur = int(duration)
-        best = None
-        best_score = -1
-        for entry in results:
-            score = 0
-            if entry.get("syncedLyrics"):
-                score += 2
-            elif entry.get("plainLyrics"):
-                score += 1
-            else:
-                continue
-            entry_dur = entry.get("duration") or 0
-            if abs(entry_dur - int_dur) <= 3:
-                score += 1
-            if score > best_score:
-                best = entry
-                best_score = score
-        if best:
-            return _extract_lyrics(best)
-    except (HTTPError, URLError, json.JSONDecodeError, OSError) as exc:
-        _log.debug("lrclib.net search failed: %s", exc)
+    results = _request_json(f"https://lrclib.net/api/search?{params}", _SEARCH_TIMEOUT)
+    if not isinstance(results, list) or not results:
+        return None
+    # Prefer a result whose duration is close and that has synced lyrics
+    int_dur = int(duration)
+    best = None
+    best_score = -1
+    for entry in results:
+        score = 0
+        if entry.get("syncedLyrics"):
+            score += 2
+        elif entry.get("plainLyrics"):
+            score += 1
+        else:
+            continue
+        entry_dur = entry.get("duration") or 0
+        if abs(entry_dur - int_dur) <= 3:
+            score += 1
+        if score > best_score:
+            best = entry
+            best_score = score
+    if best:
+        return _extract_lyrics(best)
     return None
 
 
