@@ -53,7 +53,7 @@ def _request_json(url: str, timeout: float):
 # Parenthetical suffixes Apple Music adds that lrclib typically doesn't have.
 _STRIP_SUFFIXES_RE = re.compile(
     r"\s*\("
-    r"(?:Remastered(?:\s+\d{4})?|Deluxe(?:\s+Edition)?|Bonus\s+Track\s+Version"
+    r"(?:Remaster(?:ed)?(?:\s+(?:\d{4}|Version))?|Deluxe(?:\s+Edition)?|Bonus\s+Track\s+Version"
     r"|Anniversary\s+Edition|Expanded\s+Edition|Special\s+Edition)"
     r"\)\s*",
     re.IGNORECASE,
