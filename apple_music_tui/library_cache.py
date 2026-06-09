@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -46,12 +47,20 @@ CREATE TABLE IF NOT EXISTS lyrics (
 """
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Treat timezone-naive stored timestamps as UTC so comparisons can't raise."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 class LibraryCache:
     """Read/write cache for library album and track metadata."""
 
     def __init__(self, db_path: Path = DB_PATH) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
+        # One connection shared between the event-loop thread and executor
+        # threads; serialize all access so transactions can't interleave.
+        self._lock = threading.Lock()
         try:
             self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
@@ -61,47 +70,53 @@ class LibraryCache:
             raise
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def is_empty(self) -> bool:
-        row = self._conn.execute("SELECT COUNT(*) FROM tracks").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM tracks").fetchone()
         return row[0] == 0
 
     def get_albums(self) -> list[tuple[str, str]]:
-        rows = self._conn.execute(
-            "SELECT DISTINCT album, artist FROM tracks ORDER BY album COLLATE NOCASE"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT album, artist FROM tracks ORDER BY album COLLATE NOCASE"
+            ).fetchall()
         return [(r[0], r[1]) for r in rows]
 
     def get_album_tracks(self, album_name: str, artist: str = "") -> list[str]:
-        if artist:
-            rows = self._conn.execute(
-                "SELECT track_name FROM tracks WHERE album = ? AND artist = ? ORDER BY track_number",
-                (album_name, artist),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT track_name FROM tracks WHERE album = ? ORDER BY track_number",
-                (album_name,),
-            ).fetchall()
+        with self._lock:
+            if artist:
+                rows = self._conn.execute(
+                    "SELECT track_name FROM tracks WHERE album = ? AND artist = ? ORDER BY track_number",
+                    (album_name, artist),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT track_name FROM tracks WHERE album = ? ORDER BY track_number",
+                    (album_name,),
+                ).fetchall()
         return [r[0] for r in rows]
 
     def get_playlists(self) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT DISTINCT playlist_name FROM playlists ORDER BY playlist_name COLLATE NOCASE"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT playlist_name FROM playlists ORDER BY playlist_name COLLATE NOCASE"
+            ).fetchall()
         return [r[0] for r in rows]
 
     def get_playlist_tracks(self, playlist_name: str) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT track_name FROM playlists WHERE playlist_name = ? ORDER BY track_position",
-            (playlist_name,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT track_name FROM playlists WHERE playlist_name = ? ORDER BY track_position",
+                (playlist_name,),
+            ).fetchall()
         return [r[0] for r in rows]
 
     def replace_playlists(self, playlists: dict[str, list[str]]) -> None:
         """Replace all cached playlists with a fresh set."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute("DELETE FROM playlists")
             rows = []
             for name, tracks in playlists.items():
@@ -113,12 +128,13 @@ class LibraryCache:
             )
 
     def has_playlists(self) -> bool:
-        row = self._conn.execute("SELECT COUNT(*) FROM playlists").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM playlists").fetchone()
         return row[0] > 0
 
     def replace_all(self, tracks: list[dict]) -> None:
         """Replace all cached tracks with a fresh set."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute("DELETE FROM tracks")
             self._conn.executemany(
                 "INSERT INTO tracks (album, artist, track_name, track_number) VALUES (?, ?, ?, ?)",
@@ -131,15 +147,16 @@ class LibraryCache:
 
     def get_lyrics(self, track: str, artist: str, album: str) -> dict | None:
         """Return cached lyrics or None if not cached or expired."""
-        row = self._conn.execute(
-            "SELECT synced_lyrics, plain_lyrics, fetched_at FROM lyrics WHERE track_name = ? AND artist = ? AND album = ?",
-            (track, artist, album),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT synced_lyrics, plain_lyrics, fetched_at FROM lyrics WHERE track_name = ? AND artist = ? AND album = ?",
+                (track, artist, album),
+            ).fetchone()
         if row is None:
             return None
         synced, plain, fetched_at_str = row
         try:
-            fetched_at = datetime.fromisoformat(fetched_at_str)
+            fetched_at = _as_utc(datetime.fromisoformat(fetched_at_str))
             ttl = LYRICS_CACHE_TTL if (synced or plain) else LYRICS_MISS_TTL
             if datetime.now(timezone.utc) - fetched_at > ttl:
                 return None
@@ -151,7 +168,7 @@ class LibraryCache:
         self, track: str, artist: str, album: str, synced: str | None, plain: str | None
     ) -> None:
         """Cache lyrics for a track (upsert)."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR REPLACE INTO lyrics (track_name, artist, album, synced_lyrics, plain_lyrics, fetched_at)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
@@ -159,12 +176,13 @@ class LibraryCache:
             )
 
     def get_last_sync(self) -> datetime | None:
-        row = self._conn.execute(
-            "SELECT value FROM cache_meta WHERE key = 'last_sync'"
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM cache_meta WHERE key = 'last_sync'"
+            ).fetchone()
         if row:
             try:
-                return datetime.fromisoformat(row[0])
+                return _as_utc(datetime.fromisoformat(row[0]))
             except ValueError:
                 return None
         return None

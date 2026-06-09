@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apple_music_tui.music_client import MusicClient
+from apple_music_tui.music_client import MusicClient, _escape
 
 
 def _make_state_output(
@@ -39,6 +39,22 @@ def client() -> MusicClient:
     return MusicClient()
 
 
+class TestEscape:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ('Say "Hi"', 'Say \\"Hi\\"'),
+            ("Back\\slash", "Back\\\\slash"),
+            ("Line\nbreak", "Line\\nbreak"),
+            ("Carriage\rreturn", "Carriage\\rreturn"),
+            ("Tab\there", "Tab\\there"),
+            ("plain", "plain"),
+        ],
+    )
+    def test_escapes_special_characters(self, raw: str, expected: str) -> None:
+        assert _escape(raw) == expected
+
+
 class TestGetStateDefaults:
     async def test_returns_defaults_when_run_returns_none(self, client: MusicClient) -> None:
         client._run = AsyncMock(return_value=None)
@@ -52,6 +68,7 @@ class TestGetStateDefaults:
         assert state["shuffle"] is False
         assert state["repeat"] == "off"
         assert state["current_playlist"] == ""
+        assert state["track_index"] == 0
 
     async def test_returns_defaults_when_run_returns_empty_string(self, client: MusicClient) -> None:
         client._run = AsyncMock(return_value="")
@@ -68,6 +85,11 @@ class TestGetStateDefaults:
         assert state["volume"] == 50       # default
         assert state["shuffle"] is False   # default
         assert state["repeat"] == "off"    # default
+
+    async def test_parses_track_index(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="STATE: playing\nTRACKIDX: 7")
+        state = await client.get_state()
+        assert state["track_index"] == 7
 
 
 class TestGetStatePlayingFields:

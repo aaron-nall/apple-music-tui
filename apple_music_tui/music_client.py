@@ -7,6 +7,17 @@ from typing import Literal, TypedDict
 _log = logging.getLogger(__name__)
 
 
+def _escape(text: str) -> str:
+    """Escape a value for embedding in a double-quoted AppleScript string literal."""
+    return (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
 class AirPlayDevice(TypedDict):
     name: str
     kind: str
@@ -26,6 +37,7 @@ class MusicState(TypedDict):
     shuffle: bool
     repeat: str
     current_playlist: str
+    track_index: int
 
 
 class MusicClient:
@@ -121,6 +133,7 @@ end tell"""
             "shuffle": False,
             "repeat": "off",
             "current_playlist": "",
+            "track_index": 0,
         }
         raw = await self._run(self._GET_STATE_SCRIPT)
         if not raw:
@@ -221,7 +234,7 @@ end tell"""
         return [p for p in raw.split(self._DELIM) if p.strip()]
 
     async def play_playlist(self, name: str) -> None:
-        escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+        escaped = _escape(name)
         script = f"""\
 tell application "Music"
     set matchedPL to first user playlist whose name is "{escaped}"
@@ -230,7 +243,7 @@ end tell"""
         await self._run(script)
 
     async def get_playlist_tracks(self, name: str) -> list[str]:
-        escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+        escaped = _escape(name)
         script = f"""\
 tell application "Music"
     set d to "|||"
@@ -255,7 +268,7 @@ end tell"""
         return [t.strip() for t in raw.split(self._DELIM) if t.strip()]
 
     async def play_playlist_track(self, playlist_name: str, track_index: int) -> None:
-        escaped = playlist_name.replace("\\", "\\\\").replace('"', '\\"')
+        escaped = _escape(playlist_name)
         script = f"""\
 tell application "Music"
     set matchedPL to first user playlist whose name is "{escaped}"
@@ -295,11 +308,9 @@ end tell"""
         return result
 
     async def get_album_tracks(self, album_name: str, artist: str = "") -> list[str]:
-        escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
-        condition = f'whose album is "{escaped}"'
+        condition = f'whose album is "{_escape(album_name)}"'
         if artist:
-            escaped_artist = artist.replace("\\", "\\\\").replace('"', '\\"')
-            condition += f' and album artist is "{escaped_artist}"'
+            condition += f' and album artist is "{_escape(artist)}"'
         script = f"""\
 tell application "Music"
     set d to "|||"
@@ -315,11 +326,9 @@ end tell"""
         return [t.strip() for t in raw.split(self._DELIM) if t.strip()]
 
     async def play_album(self, album_name: str, artist: str = "") -> None:
-        escaped = album_name.replace("\\", "\\\\").replace('"', '\\"')
-        condition = f'whose album is "{escaped}"'
+        condition = f'whose album is "{_escape(album_name)}"'
         if artist:
-            escaped_artist = artist.replace("\\", "\\\\").replace('"', '\\"')
-            condition += f' and album artist is "{escaped_artist}"'
+            condition += f' and album artist is "{_escape(artist)}"'
         script = f"""\
 tell application "Music"
     play (first track of library playlist 1 {condition})
@@ -327,13 +336,12 @@ end tell"""
         await self._run(script)
 
     async def play_album_track(self, album_name: str, track_index: int, track_name: str = "", artist: str = "") -> None:
-        escaped_album = album_name.replace("\\", "\\\\").replace('"', '\\"')
+        escaped_album = _escape(album_name)
         artist_clause = ""
         if artist:
-            escaped_artist = artist.replace("\\", "\\\\").replace('"', '\\"')
-            artist_clause = f' and album artist is "{escaped_artist}"'
+            artist_clause = f' and album artist is "{_escape(artist)}"'
         if track_name:
-            escaped_track = track_name.replace("\\", "\\\\").replace('"', '\\"')
+            escaped_track = _escape(track_name)
             script = f"""\
 tell application "Music"
     play (first track of library playlist 1 whose album is "{escaped_album}" and name is "{escaped_track}"{artist_clause})

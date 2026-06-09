@@ -80,6 +80,8 @@ class AppleMusicApp(App):
         self._album_track_list: list[str] = []  # ordered track names for the album
         self._album_track_idx: int = 0  # current index in _album_track_list
         self._album_awaiting_play: bool = False  # True after advancing, until "playing" seen
+        self._album_awaiting_since: float = 0.0  # when _album_awaiting_play was set
+        self._album_play_retries: int = 0  # failed attempts to start the advanced track
         # Lyrics state
         self._lyrics_visible: bool = False
         self._lyrics_track: str = ""
@@ -152,35 +154,8 @@ class AppleMusicApp(App):
                     self._lyrics_current_line = -1
                     self.run_worker(self._load_lyrics(), group="lyrics")
 
-            # Album continuation: if we started album playback and it stopped,
-            # advance to the next track in the album.  The _album_awaiting_play
-            # flag prevents a second "stopped" poll from double-advancing or
-            # prematurely clearing _album_playing before the new track starts.
             if self._album_playing and self._album_track_list:
-                if state["state"] == "playing":
-                    self._album_awaiting_play = False
-                    if state["track"] in self._album_track_list:
-                        # Use current index if it still matches to handle duplicate track names;
-                        # otherwise find the next matching index after the current position.
-                        track = state["track"]
-                        if self._album_track_list[self._album_track_idx] != track:
-                            for i, name in enumerate(self._album_track_list):
-                                if name == track and i >= self._album_track_idx:
-                                    self._album_track_idx = i
-                                    break
-                            else:
-                                self._album_track_idx = next(
-                                    i for i, name in enumerate(self._album_track_list) if name == track
-                                )
-                elif state["state"] == "stopped" and not self._album_awaiting_play:
-                    if self._album_track_idx < len(self._album_track_list) - 1:
-                        self._album_track_idx += 1
-                        self._album_awaiting_play = True
-                        self._alert(f"album continue: track {self._album_track_idx + 1}/{len(self._album_track_list)}")
-                        next_track_name = self._album_track_list[self._album_track_idx]
-                        await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, next_track_name, self._album_artist)
-                    else:
-                        self._album_playing = ""  # reached end of album
+                await self._handle_album_continuation(state)
 
             track_index = (self._album_track_idx + 1) if self._album_playing else (state.get("track_index") or None)
             browser.set_current_track(state["track"], state.get("album"), track_index)
@@ -215,9 +190,63 @@ class AppleMusicApp(App):
                     if not tracks:
                         tracks = await self.client.get_album_tracks(current_album, artist)
                     browser.expand_album(current_album, tracks, artist)
+        except Exception:
+            # This runs on a 1s timer; an escaped exception would crash the app.
+            _log.exception("State poll failed")
         finally:
             self._polling = False
             self._alert("poll_state done")
+
+    async def _handle_album_continuation(self, state: MusicState) -> None:
+        """Advance to the next album track when playback stops at a track boundary.
+
+        The _album_awaiting_play flag prevents a second "stopped" poll from
+        double-advancing or prematurely clearing _album_playing before the new
+        track starts.
+        """
+        if state["state"] == "playing":
+            self._album_awaiting_play = False
+            self._album_play_retries = 0
+            track = state["track"]
+            if track in self._album_track_list:
+                # Use current index if it still matches to handle duplicate track names;
+                # otherwise find the next matching index after the current position.
+                if (
+                    self._album_track_idx >= len(self._album_track_list)
+                    or self._album_track_list[self._album_track_idx] != track
+                ):
+                    for i, name in enumerate(self._album_track_list):
+                        if name == track and i >= self._album_track_idx:
+                            self._album_track_idx = i
+                            break
+                    else:
+                        self._album_track_idx = next(
+                            i for i, name in enumerate(self._album_track_list) if name == track
+                        )
+        elif state["state"] == "stopped":
+            now = time.monotonic()
+            if self._album_awaiting_play:
+                # The advance command may have silently failed; retry the
+                # same track, and give up continuation if it won't start.
+                if now - self._album_awaiting_since > 5.0:
+                    if self._album_play_retries >= 2:
+                        self._alert("album continue: giving up after failed retries")
+                        self._album_playing = ""
+                        self._album_awaiting_play = False
+                    else:
+                        self._album_play_retries += 1
+                        self._album_awaiting_since = now
+                        self._alert(f"album continue: retry {self._album_play_retries} for track {self._album_track_idx + 1}")
+                        await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, self._album_track_list[self._album_track_idx], self._album_artist)
+            elif self._album_track_idx < len(self._album_track_list) - 1:
+                self._album_track_idx += 1
+                self._album_awaiting_play = True
+                self._album_awaiting_since = now
+                self._alert(f"album continue: track {self._album_track_idx + 1}/{len(self._album_track_list)}")
+                next_track_name = self._album_track_list[self._album_track_idx]
+                await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, next_track_name, self._album_artist)
+            else:
+                self._album_playing = ""  # reached end of album
 
     def _interpolate_position(self) -> None:
         if self._last_state is None:
@@ -363,6 +392,7 @@ class AppleMusicApp(App):
         self._album_track_list = tracks
         self._album_track_idx = start_idx
         self._album_awaiting_play = False
+        self._album_play_retries = 0
         return tracks
 
     async def on_playlist_browser_album_selected(
@@ -538,6 +568,9 @@ class AppleMusicApp(App):
 
             await overlay.set_lyrics(track, artist, lines, gap_indices=self._gap_lines)
             self._lyrics_current_line = -1
+        except Exception:
+            _log.exception("Failed to load lyrics for %r / %r", track, artist)
+            await overlay.show_no_lyrics(track, artist)
         finally:
             self._lyrics_loading = False
 
