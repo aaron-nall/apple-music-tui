@@ -281,7 +281,10 @@ class AppleMusicApp(App):
     async def _load_playlists_live(self) -> None:
         self._alert("load_playlists_live start")
         names = await self.client.get_playlists()
-        self.query_one(PlaylistBrowser).set_playlists(names)
+        # Don't clobber a good (cached) list with an empty result from a
+        # transient osascript failure; only update when we actually got names.
+        if names:
+            self.query_one(PlaylistBrowser).set_playlists(names)
         self._alert(f"load_playlists_live done ({len(names)} playlists)")
 
     def _load_library_cached(self) -> None:
@@ -306,8 +309,12 @@ class AppleMusicApp(App):
             playlists = self._cache.get_playlists()
             browser.set_playlists(playlists)
             self._alert(f"cache loaded ({len(playlists)} playlists)")
-        else:
-            self.run_worker(self._load_playlists_live(), group="playlists")
+
+        # Always refresh playlist names live — a single cheap osascript call,
+        # independent of the throttled track sync below — so playlists added or
+        # removed since the last sync appear on every launch (the cached list,
+        # if any, is painted first for instant display).
+        self.run_worker(self._load_playlists_live(), group="playlists")
 
         self.run_worker(self._sync_library(), exclusive=True, group="sync")
 

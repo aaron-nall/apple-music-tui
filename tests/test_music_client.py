@@ -206,7 +206,9 @@ class TestGetStateEdgeCases:
 
 class TestGetPlaylists:
     async def test_returns_list_of_names(self, client: MusicClient) -> None:
-        client._run = AsyncMock(return_value="Playlist 1|||Playlist 2|||Playlist 3|||")
+        client._run = AsyncMock(
+            return_value="Playlist 1|||Playlist 2|||Playlist 3|||>>>none|||none|||none|||"
+        )
         playlists = await client.get_playlists()
         assert playlists == ["Playlist 1", "Playlist 2", "Playlist 3"]
 
@@ -218,12 +220,34 @@ class TestGetPlaylists:
         client._run = AsyncMock(return_value="")
         assert await client.get_playlists() == []
 
+    async def test_returns_empty_list_on_missing_separator(self, client: MusicClient) -> None:
+        client._run = AsyncMock(return_value="Playlist 1|||Playlist 2|||")
+        assert await client.get_playlists() == []
+
     async def test_preserves_playlist_names_verbatim(self, client: MusicClient) -> None:
         # Names are returned as-is so lookups using the exact name succeed.
         # e.g. an Apple Music playlist named "Disturbed " with a trailing space.
-        client._run = AsyncMock(return_value="Chill|||Jazz |||")
+        client._run = AsyncMock(return_value="Chill|||Jazz |||>>>none|||none|||")
         playlists = await client.get_playlists()
         assert playlists == ["Chill", "Jazz "]
+
+    async def test_excludes_master_library_nodes(self, client: MusicClient) -> None:
+        # The whole-library master nodes ("Library"/"Music") mirror the entire
+        # library and must not appear as playlists; case-insensitive on kind.
+        client._run = AsyncMock(
+            return_value="Library|||Music|||Chill|||>>>Library|||Music|||none|||"
+        )
+        playlists = await client.get_playlists()
+        assert playlists == ["Chill"]
+
+    async def test_includes_subscription_playlists(self, client: MusicClient) -> None:
+        # Subscription (Apple Music shared/catalog) playlists report kind "none"
+        # and must be kept — they were previously invisible to the browser.
+        client._run = AsyncMock(
+            return_value="My Mix|||Serj Tankian Essentials|||>>>none|||none|||"
+        )
+        playlists = await client.get_playlists()
+        assert playlists == ["My Mix", "Serj Tankian Essentials"]
 
 
 class TestGetPlaylistTracks:

@@ -6,6 +6,13 @@ from typing import Literal, TypedDict
 
 _log = logging.getLogger(__name__)
 
+# special kinds that identify Apple Music's whole-library/media master nodes
+# (e.g. "Library", "Music"). These are not real playlists — they mirror the
+# entire library — so they're excluded from the playlist browser.
+_MASTER_PLAYLIST_KINDS = frozenset(
+    {"library", "music", "movies", "tv shows", "podcasts", "audiobooks", "books"}
+)
+
 
 def _escape(text: str) -> str:
     """Escape a value for embedding in a double-quoted AppleScript string literal."""
@@ -219,25 +226,47 @@ end tell"""
         await self._run(f'tell application "Music" to set sound volume to {level}')
 
     async def get_playlists(self) -> list[str]:
+        # Iterate `every playlist`, not `every user playlist`: the latter omits
+        # subscription playlists (Apple Music catalog/shared playlists), which
+        # would otherwise be invisible in the browser. The special-kind column
+        # lets us drop the whole-library master nodes ("Library"/"Music").
         script = """\
 tell application "Music"
     set d to "|||"
-    set output to ""
-    repeat with pl in (every user playlist)
-        set output to output & (name of pl as string) & d
+    set r to ">>>"
+    set nameOut to ""
+    set kindOut to ""
+    repeat with pl in (every playlist)
+        set nameOut to nameOut & (name of pl as string) & d
+        set k to "none"
+        try
+            set k to (special kind of pl as string)
+        end try
+        set kindOut to kindOut & k & d
     end repeat
-    return output
+    return nameOut & r & kindOut
 end tell"""
         raw = await self._run(script)
         if not raw:
             return []
-        return [p for p in raw.split(self._DELIM) if p.strip()]
+        parts = raw.split(">>>")
+        if len(parts) != 2:
+            return []
+        names = parts[0].split(self._DELIM)
+        kinds = parts[1].split(self._DELIM)
+        # Skip empty names and whole-library master nodes; keep names verbatim
+        # (e.g. trailing spaces) so the exact-name lookups below still match.
+        return [
+            name
+            for name, kind in zip(names, kinds)
+            if name.strip() and kind.strip().lower() not in _MASTER_PLAYLIST_KINDS
+        ]
 
     async def play_playlist(self, name: str) -> None:
         escaped = _escape(name)
         script = f"""\
 tell application "Music"
-    set matchedPL to first user playlist whose name is "{escaped}"
+    set matchedPL to first playlist whose name is "{escaped}"
     play matchedPL
 end tell"""
         await self._run(script)
@@ -248,9 +277,9 @@ end tell"""
 tell application "Music"
     set d to "|||"
     set output to ""
-    set matchedPL to first user playlist whose name is "{escaped}"
+    set matchedPL to first playlist whose name is "{escaped}"
     if special kind of matchedPL is folder then
-        repeat with childPL in (every user playlist whose parent is matchedPL)
+        repeat with childPL in (every playlist whose parent is matchedPL)
             repeat with t in (every track of childPL)
                 set output to output & (name of t as string) & d
             end repeat
@@ -271,7 +300,7 @@ end tell"""
         escaped = _escape(playlist_name)
         script = f"""\
 tell application "Music"
-    set matchedPL to first user playlist whose name is "{escaped}"
+    set matchedPL to first playlist whose name is "{escaped}"
     play track {track_index} of matchedPL
 end tell"""
         await self._run(script)
