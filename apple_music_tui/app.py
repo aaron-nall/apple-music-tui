@@ -74,14 +74,18 @@ class AppleMusicApp(App):
         self._cache: LibraryCache | None = None
         self._syncing: bool = False
         self._t0: float = time.monotonic()
-        # Album continuation: track which album is playing and advance when a track ends
-        self._album_playing: str = ""  # album name currently being played
-        self._album_artist: str = ""  # artist of the album currently being played
-        self._album_track_list: list[str] = []  # ordered track names for the album
-        self._album_track_idx: int = 0  # current index in _album_track_list
-        self._album_awaiting_play: bool = False  # True after advancing, until "playing" seen
-        self._album_awaiting_since: float = 0.0  # when _album_awaiting_play was set
-        self._album_play_retries: int = 0  # failed attempts to start the advanced track
+        # Playback queue continuation: advance to the next track when one ends.
+        # Apple Music doesn't auto-continue after a single-track album play or
+        # `play track N of <playlist>` (which detaches the track into the
+        # library), so the poll loop drives advancement for both.
+        self._queue_kind: str = ""  # "" (off) | "album" | "playlist"
+        self._queue_name: str = ""  # album or playlist name currently playing
+        self._queue_artist: str = ""  # album artist (unused for playlists)
+        self._queue_track_list: list[str] = []  # ordered track names
+        self._queue_track_idx: int = 0  # current index in _queue_track_list
+        self._queue_awaiting_play: bool = False  # True after advancing, until "playing" seen
+        self._queue_awaiting_since: float = 0.0  # when _queue_awaiting_play was set
+        self._queue_play_retries: int = 0  # failed attempts to start the advanced track
         # Lyrics state
         self._lyrics_visible: bool = False
         self._lyrics_track: str = ""
@@ -154,16 +158,20 @@ class AppleMusicApp(App):
                     self._lyrics_current_line = -1
                     self.run_worker(self._load_lyrics(), group="lyrics")
 
-            if self._album_playing and self._album_track_list:
-                await self._handle_album_continuation(state)
+            if self._queue_kind and self._queue_track_list:
+                await self._handle_continuation(state)
 
-            track_index = (self._album_track_idx + 1) if self._album_playing else (state.get("track_index") or None)
+            track_index = (self._queue_track_idx + 1) if self._queue_kind else (state.get("track_index") or None)
             browser.set_current_track(state["track"], state.get("album"), track_index)
 
             # Auto-expand the currently playing playlist or album
             if browser._mode == "playlists":
                 current_pl = state["current_playlist"]
-                if current_pl and current_pl != self._last_known_playlist:
+                # Only react to playlists we actually list. Jumping to a track
+                # detaches it into the "Music" library node (Apple Music reports
+                # current playlist as "Music"), which we exclude — reacting to it
+                # would collapse the view, so ignore anything not in the list.
+                if current_pl in browser._playlist_names and current_pl != self._last_known_playlist:
                     self._last_known_playlist = current_pl
                     tracks = self._cache_get_playlist_tracks(current_pl)
                     if not tracks:
@@ -173,8 +181,8 @@ class AppleMusicApp(App):
                 current_album = state["album"]
                 if current_album and current_album != self._last_known_album:
                     self._last_known_album = current_album
-                    if self._album_playing == current_album and self._album_artist:
-                        artist = self._album_artist
+                    if self._queue_kind == "album" and self._queue_name == current_album and self._queue_artist:
+                        artist = self._queue_artist
                     else:
                         # Look up album artist from the browser's album list
                         matches = [a for n, a in browser._album_items if n == current_album]
@@ -197,56 +205,65 @@ class AppleMusicApp(App):
             self._polling = False
             self._alert("poll_state done")
 
-    async def _handle_album_continuation(self, state: MusicState) -> None:
-        """Advance to the next album track when playback stops at a track boundary.
+    async def _queue_play_index(self, idx: int) -> None:
+        """Play the track at idx of the active queue (album or playlist)."""
+        name = self._queue_track_list[idx]
+        if self._queue_kind == "playlist":
+            await self.client.play_playlist_track(self._queue_name, idx + 1)
+        else:
+            await self.client.play_album_track(self._queue_name, idx + 1, name, self._queue_artist)
 
-        The _album_awaiting_play flag prevents a second "stopped" poll from
-        double-advancing or prematurely clearing _album_playing before the new
-        track starts.
+    async def _handle_continuation(self, state: MusicState) -> None:
+        """Advance to the next queued track when playback stops at a boundary.
+
+        Apple Music doesn't auto-continue after a single-track album play or
+        `play track N of <playlist>` (the track detaches into the library), so
+        we drive it. The _queue_awaiting_play flag prevents a second "stopped"
+        poll from double-advancing or prematurely clearing the queue before the
+        new track starts.
         """
         if state["state"] == "playing":
-            self._album_awaiting_play = False
-            self._album_play_retries = 0
+            self._queue_awaiting_play = False
+            self._queue_play_retries = 0
             track = state["track"]
-            if track in self._album_track_list:
+            if track in self._queue_track_list:
                 # Use current index if it still matches to handle duplicate track names;
                 # otherwise find the next matching index after the current position.
                 if (
-                    self._album_track_idx >= len(self._album_track_list)
-                    or self._album_track_list[self._album_track_idx] != track
+                    self._queue_track_idx >= len(self._queue_track_list)
+                    or self._queue_track_list[self._queue_track_idx] != track
                 ):
-                    for i, name in enumerate(self._album_track_list):
-                        if name == track and i >= self._album_track_idx:
-                            self._album_track_idx = i
+                    for i, name in enumerate(self._queue_track_list):
+                        if name == track and i >= self._queue_track_idx:
+                            self._queue_track_idx = i
                             break
                     else:
-                        self._album_track_idx = next(
-                            i for i, name in enumerate(self._album_track_list) if name == track
+                        self._queue_track_idx = next(
+                            i for i, name in enumerate(self._queue_track_list) if name == track
                         )
         elif state["state"] == "stopped":
             now = time.monotonic()
-            if self._album_awaiting_play:
+            if self._queue_awaiting_play:
                 # The advance command may have silently failed; retry the
                 # same track, and give up continuation if it won't start.
-                if now - self._album_awaiting_since > 5.0:
-                    if self._album_play_retries >= 2:
-                        self._alert("album continue: giving up after failed retries")
-                        self._album_playing = ""
-                        self._album_awaiting_play = False
+                if now - self._queue_awaiting_since > 5.0:
+                    if self._queue_play_retries >= 2:
+                        self._alert("queue continue: giving up after failed retries")
+                        self._queue_kind = ""
+                        self._queue_awaiting_play = False
                     else:
-                        self._album_play_retries += 1
-                        self._album_awaiting_since = now
-                        self._alert(f"album continue: retry {self._album_play_retries} for track {self._album_track_idx + 1}")
-                        await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, self._album_track_list[self._album_track_idx], self._album_artist)
-            elif self._album_track_idx < len(self._album_track_list) - 1:
-                self._album_track_idx += 1
-                self._album_awaiting_play = True
-                self._album_awaiting_since = now
-                self._alert(f"album continue: track {self._album_track_idx + 1}/{len(self._album_track_list)}")
-                next_track_name = self._album_track_list[self._album_track_idx]
-                await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, next_track_name, self._album_artist)
+                        self._queue_play_retries += 1
+                        self._queue_awaiting_since = now
+                        self._alert(f"queue continue: retry {self._queue_play_retries} for track {self._queue_track_idx + 1}")
+                        await self._queue_play_index(self._queue_track_idx)
+            elif self._queue_track_idx < len(self._queue_track_list) - 1:
+                self._queue_track_idx += 1
+                self._queue_awaiting_play = True
+                self._queue_awaiting_since = now
+                self._alert(f"queue continue: track {self._queue_track_idx + 1}/{len(self._queue_track_list)}")
+                await self._queue_play_index(self._queue_track_idx)
             else:
-                self._album_playing = ""  # reached end of album
+                self._queue_kind = ""  # reached end of queue
 
     def _interpolate_position(self) -> None:
         if self._last_state is None:
@@ -374,7 +391,9 @@ class AppleMusicApp(App):
     async def on_playlist_browser_playlist_selected(
         self, message: PlaylistBrowser.PlaylistSelected
     ) -> None:
-        self._album_playing = ""  # stop album continuation
+        # Playing the whole playlist establishes a native queue that continues
+        # on its own, so no app-driven continuation is needed here.
+        self._queue_kind = ""
         name = message.name
         await self.client.play_playlist(name)
         tracks = self._cache_get_playlist_tracks(name)
@@ -386,20 +405,34 @@ class AppleMusicApp(App):
     async def on_playlist_browser_track_selected(
         self, message: PlaylistBrowser.TrackSelected
     ) -> None:
-        self._album_playing = ""
+        # `play track N of <playlist>` plays the right track but detaches it
+        # into the library (no native continuation), so drive it ourselves.
         await self.client.play_playlist_track(message.playlist, message.track_index)
+        await self._start_playlist_continuation(message.playlist, message.track_index - 1)
+
+    def _set_queue(self, kind: str, name: str, tracks: list[str], start_idx: int, artist: str = "") -> None:
+        self._queue_kind = kind
+        self._queue_name = name
+        self._queue_artist = artist
+        self._queue_track_list = tracks
+        self._queue_track_idx = start_idx
+        self._queue_awaiting_play = False
+        self._queue_play_retries = 0
 
     async def _start_album_continuation(self, album_name: str, start_idx: int = 0, artist: str = "") -> list[str]:
         """Set up album continuation tracking and return the track list."""
         tracks = self._cache_get_album_tracks(album_name, artist)
         if not tracks:
             tracks = await self.client.get_album_tracks(album_name, artist)
-        self._album_playing = album_name
-        self._album_artist = artist
-        self._album_track_list = tracks
-        self._album_track_idx = start_idx
-        self._album_awaiting_play = False
-        self._album_play_retries = 0
+        self._set_queue("album", album_name, tracks, start_idx, artist)
+        return tracks
+
+    async def _start_playlist_continuation(self, playlist_name: str, start_idx: int = 0) -> list[str]:
+        """Set up playlist continuation tracking and return the track list."""
+        tracks = self._cache_get_playlist_tracks(playlist_name)
+        if not tracks:
+            tracks = await self.client.get_playlist_tracks(playlist_name)
+        self._set_queue("playlist", playlist_name, tracks, start_idx)
         return tracks
 
     async def on_playlist_browser_album_selected(
@@ -422,20 +455,18 @@ class AppleMusicApp(App):
         await self.client.play_pause()
 
     async def action_next_track(self) -> None:
-        if self._album_playing and self._album_track_list:
-            if self._album_track_idx < len(self._album_track_list) - 1:
-                self._album_track_idx += 1
-                track_name = self._album_track_list[self._album_track_idx]
-                await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, track_name, self._album_artist)
+        if self._queue_kind and self._queue_track_list:
+            if self._queue_track_idx < len(self._queue_track_list) - 1:
+                self._queue_track_idx += 1
+                await self._queue_play_index(self._queue_track_idx)
         else:
             await self.client.next_track()
 
     async def action_previous_track(self) -> None:
-        if self._album_playing and self._album_track_list:
-            if self._album_track_idx > 0:
-                self._album_track_idx -= 1
-                track_name = self._album_track_list[self._album_track_idx]
-                await self.client.play_album_track(self._album_playing, self._album_track_idx + 1, track_name, self._album_artist)
+        if self._queue_kind and self._queue_track_list:
+            if self._queue_track_idx > 0:
+                self._queue_track_idx -= 1
+                await self._queue_play_index(self._queue_track_idx)
         else:
             await self.client.previous_track()
 
