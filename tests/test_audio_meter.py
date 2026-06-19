@@ -69,6 +69,14 @@ class TestAudioMeterUnit:
         meter = AudioMeter()
         assert meter.levels == (0.0, 0.0)
 
+    def test_spectrum_before_start_is_zero(self):
+        # Ring is empty (and numpy may be absent) — spectrum must be all zeros.
+        from apple_music_tui.audio_meter import AudioMeter
+        meter = AudioMeter()
+        left, right = meter.spectrum(16)
+        assert left == [0.0] * 16
+        assert right == [0.0] * 16
+
     def test_stop_before_start_is_safe(self):
         from apple_music_tui.audio_meter import AudioMeter
         meter = AudioMeter()
@@ -157,6 +165,39 @@ class TestAudioMeterIntegration:
         with meter:
             await asyncio.sleep(0.3)
         assert meter.levels == (0.0, 0.0)
+
+    async def test_spectrum_peak_at_440hz(self, audio_file_path: str):
+        from apple_music_tui.audio_meter import (
+            FFT_SIZE, SPECTRUM_FMAX, SPECTRUM_FMIN, AudioMeter, _NUMPY_AVAILABLE,
+        )
+        if not _NUMPY_AVAILABLE:
+            pytest.skip("numpy not available")
+        import numpy as np
+
+        meter = AudioMeter()
+        num_bands = 24
+        try:
+            meter.load(audio_file_path)
+            meter.start()
+            # Warm the ring: it needs >= FFT_SIZE samples before spectrum() works.
+            await asyncio.sleep(max(0.5, FFT_SIZE / 44100 * 4))
+            left, right = meter.spectrum(num_bands)
+            sr = meter._sample_rate
+        finally:
+            meter.stop()
+
+        assert len(left) == num_bands and len(right) == num_bands
+        assert all(0.0 <= v <= 1.0 for v in left + right)
+
+        # The loudest band on the left channel must bracket the 440 Hz tone.
+        edges = np.logspace(
+            np.log10(SPECTRUM_FMIN), np.log10(min(SPECTRUM_FMAX, sr / 2.0)), num_bands + 1
+        )
+        peak = max(range(num_bands), key=lambda i: left[i])
+        assert edges[peak] <= 440.0 <= edges[peak + 1], (
+            f"Loudest band {peak} spans {edges[peak]:.0f}–{edges[peak + 1]:.0f} Hz, "
+            f"expected to contain 440 Hz (sr={sr})"
+        )
 
 
 # ---------------------------------------------------------------------------
