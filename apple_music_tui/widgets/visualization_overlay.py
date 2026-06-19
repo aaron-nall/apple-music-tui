@@ -83,6 +83,7 @@ class VisualizationOverlay(CenteredOverlay, Widget):
         background: $surface;
         border: solid $accent;
         padding: 1 2;
+        content-align: center top;
     }
     VisualizationOverlay.visible {
         display: block;
@@ -113,9 +114,10 @@ class VisualizationOverlay(CenteredOverlay, Widget):
 
     def _bands_needed(self) -> int:
         w = max(self.size.width, 1)
-        if self._viz_index == 2:  # side-by-side: two half-width panels
-            panel_w = max(1, (w - 1) // 2)
-            return max(_MIN_BANDS, min(_MAX_BANDS_SPLIT, (panel_w + 1) // 2))
+        if self._viz_index == 2:
+            # Side-by-side: two n-band panels (2n-1 each) + a 3-cell divider.
+            # 4n+1 <= w keeps the row from overflowing and wrapping.
+            return max(_MIN_BANDS, min(_MAX_BANDS_SPLIT, (w - 1) // 4))
         return max(_MIN_BANDS, min(_MAX_BANDS, (w + 1) // 2))
 
     def _smooth(self, target: list[float], smoothed: list[float]) -> list[float]:
@@ -166,7 +168,10 @@ class VisualizationOverlay(CenteredOverlay, Widget):
         n = self._bands_needed()
         left = self._fit(self._sm_l, n)
         right = self._fit(self._sm_r, n)
-        body_h = h - 1  # header row
+        # Reserve the header row (top) and a margin row (bottom) so the dense
+        # base of an upward-growing bar never collides with the popup border.
+        # Horizontal centering is handled by CSS content-align.
+        body_h = max(1, h - 2)
 
         if self._viz_index == 0:        # mirrored: right channel grows downward
             rows = self._render_split(left, right, body_h, colors, "down")
@@ -179,8 +184,10 @@ class VisualizationOverlay(CenteredOverlay, Widget):
 
     def _render_split(self, left, right, body_h, colors, bottom_dir) -> list[Text]:
         half = max(1, (body_h - 1) // 2)
-        divider = Text("─" * (2 * len(left) - 1), style="dim")
-        return [*_bars(left, half, colors, "up"), divider, *_bars(right, half, colors, bottom_dir)]
+        top = _bars(left, half, colors, "up")
+        bottom = _bars(right, half, colors, bottom_dir)
+        divider = Text("─" * top[0].cell_len, style="dim")  # match the bar-row width
+        return [*top, divider, *bottom]
 
     def _render_side_by_side(self, left, right, body_h, colors) -> list[Text]:
         rows: list[Text] = []
