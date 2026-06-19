@@ -32,8 +32,14 @@ _MIN_BANDS = 4
 _MAX_BANDS = 64        # full-width layouts (mirrored / stacked)
 _MAX_BANDS_SPLIT = 48  # per-panel cap for side-by-side
 
-# 1/8-block ramp for sub-cell vertical resolution; index 0 == empty, 8 == full.
-_BLOCKS = " ▁▂▃▄▅▆▇█"
+# Sub-cell ramps indexed by eighths filled (0 == empty, 8 == full).
+# Upward bars fill from the cell bottom — full 1/8 resolution (Block Elements).
+_BLOCKS_UP = " ▁▂▃▄▅▆▇█"
+# Downward bars fill from the cell top, but only the upper-half (▀) and full
+# (█) blocks are in Block Elements; the upper-eighth glyphs are Legacy
+# Computing and missing from many fonts. So quantize the 8 eighths into three
+# renderable buckets: empty / half / full (indexed by eighths filled).
+_BLOCKS_DOWN = " " * 3 + "▀" * 3 + "█" * 3
 
 
 def _color_for(frac: float, colors: tuple[str, str, str]) -> str:
@@ -54,6 +60,7 @@ def _bars(values: list[float], height: int, colors: tuple[str, str, str],
     at the top).  Rows are returned top-to-bottom; each row is
     ``2*len(values)-1`` cells wide (1-cell bar + 1-cell gap).
     """
+    blocks = _BLOCKS_UP if direction == "up" else _BLOCKS_DOWN
     n = len(values)
     fills = [round(v * height * 8) for v in values]  # eighths filled per band
     rows: list[Text] = []
@@ -63,8 +70,8 @@ def _bars(values: list[float], height: int, colors: tuple[str, str, str],
         color = _color_for((cells_from_base + 1) / height, colors)
         line = Text()
         for bi in range(n):
-            remaining = min(8, max(0, fills[bi] - units_below))
-            line.append(_BLOCKS[remaining], style=None if remaining == 0 else color)
+            ch = blocks[min(8, max(0, fills[bi] - units_below))]
+            line.append(ch, style=None if ch == " " else color)
             if bi != n - 1:
                 line.append(" ")
         rows.append(line)
