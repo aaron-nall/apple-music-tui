@@ -3,16 +3,20 @@ from __future__ import annotations
 
 from textual.containers import VerticalScroll
 from textual.app import ComposeResult
-from textual.events import Click, Resize
+from textual.events import Click
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
 from rich.text import Text
 
+from apple_music_tui.widgets._overlay import CenteredOverlay
 
-class LyricsOverlay(VerticalScroll):
+
+class LyricsOverlay(CenteredOverlay, VerticalScroll):
     """Full-screen centered overlay for displaying lyrics."""
+
+    OVERLAY_WIDTH_FRACTION = 0.6
 
     DEFAULT_CSS = """
     LyricsOverlay {
@@ -65,20 +69,6 @@ class LyricsOverlay(VerticalScroll):
 
     def on_mount(self) -> None:
         self._center()
-
-    def on_resize(self, event: Resize) -> None:
-        self._center()
-
-    def _center(self) -> None:
-        """Center the overlay on screen using offset."""
-        try:
-            sw, sh = self.screen.size
-            # Compute actual pixel dimensions from percentage
-            ow = int(sw * 0.6)
-            oh = int(sh * 0.8)
-            self.styles.offset = ((sw - ow) // 2, (sh - oh) // 2)
-        except Exception:
-            pass
 
     async def _clear_content(self) -> None:
         """Remove all children."""

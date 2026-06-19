@@ -11,6 +11,7 @@ from textual.containers import Vertical
 from textual.events import Click
 from textual.widgets import Button, Tabs
 
+from apple_music_tui.audio_meter import AudioMeter, AudioMeterError
 from apple_music_tui.config import load_config
 from apple_music_tui.library_cache import LibraryCache
 from apple_music_tui.lyrics import (
@@ -24,6 +25,7 @@ from apple_music_tui.widgets.lyrics_overlay import LyricsOverlay
 from apple_music_tui.widgets.now_playing import NowPlaying
 from apple_music_tui.widgets.playlist_browser import PlaylistBrowser
 from apple_music_tui.widgets.status_bar import StatusBar
+from apple_music_tui.widgets.visualization_overlay import NUM_VIZ, VisualizationOverlay
 
 _log = logging.getLogger(__name__)
 
@@ -56,6 +58,7 @@ class AppleMusicApp(App):
         Binding("a", "toggle_album_sort", "Sort Albums"),
         Binding("o", "toggle_airplay", "AirPlay"),
         Binding("y", "toggle_lyrics", "Lyrics"),
+        Binding("v", "cycle_visualization", "Visualizer"),
         Binding("escape", "close_overlay", "Close", show=False, priority=True),
         Binding("tab", "toggle_browse_mode", "Playlists/Albums", priority=True),
         Binding("q", "quit", "Quit"),
@@ -66,6 +69,10 @@ class AppleMusicApp(App):
         self._config = load_config()
         super().__init__()
         self.client = MusicClient()
+        # Shared audio meter (RMS for the control bar + FFT for the visualizer).
+        # Owned here, started in on_mount, stopped in on_unmount.
+        self.audio_meter: AudioMeter | None = None
+        self._viz_index: int = -1  # -1 = visualization overlay closed
         self._last_poll: float = 0
         self._last_state: MusicState | None = None
         self._polling: bool = False
@@ -102,6 +109,23 @@ class AppleMusicApp(App):
         elapsed = time.monotonic() - self._t0
         self.log(f"[{elapsed:.2f}s] {msg}")
 
+    def _start_audio_meter(self) -> None:
+        """Start the shared audio meter; degrade gracefully if unavailable."""
+        try:
+            meter = AudioMeter()
+            meter.start()
+            self.audio_meter = meter
+        except AudioMeterError:
+            self.audio_meter = None  # no permission / framework — meters stay flat
+
+    def on_unmount(self) -> None:
+        if self.audio_meter is not None:
+            try:
+                self.audio_meter.stop()
+            except Exception:
+                pass
+            self.audio_meter = None
+
     def compose(self) -> ComposeResult:
         with Vertical(id="main-container"):
             yield NowPlaying()
@@ -109,9 +133,13 @@ class AppleMusicApp(App):
         yield PlaylistBrowser()
         yield StatusBar()
         yield LyricsOverlay()
+        yield VisualizationOverlay()
 
     def on_mount(self) -> None:
         self._alert("on_mount start")
+        # Start the meter off the mount path: SCK setup can block for up to 10s
+        # on a cold permission grant. Consumers poll it lazily once it's ready.
+        self.run_worker(self._start_audio_meter, thread=True)
         for t in CUSTOM_THEMES:
             self.register_theme(t)
         saved = self._config.theme
@@ -511,15 +539,16 @@ class AppleMusicApp(App):
     def action_toggle_airplay(self) -> None:
         picker = self.query_one(AirPlayPicker)
         opening = not picker.expanded
-        if opening and self._lyrics_visible:
-            self._lyrics_visible = False
-            self.query_one(LyricsOverlay).remove_class("visible")
+        if opening:
+            self._close_lyrics()
+            self._close_visualization()
         picker.expanded = opening
 
     def action_toggle_lyrics(self) -> None:
         self._lyrics_visible = not self._lyrics_visible
         if self._lyrics_visible:
-            self.query_one(AirPlayPicker).expanded = False
+            self._close_airplay()
+            self._close_visualization()
         overlay = self.query_one(LyricsOverlay)
         overlay.set_class(self._lyrics_visible, "visible")
         if self._lyrics_visible:
@@ -530,13 +559,41 @@ class AppleMusicApp(App):
                     self._lyrics_current_line = -1
                     self.run_worker(self._load_lyrics(), group="lyrics")
 
-    def action_close_overlay(self) -> None:
+    def action_cycle_visualization(self) -> None:
+        """Cycle the visualization overlay: mirrored -> stacked -> side-by-side -> closed."""
+        nxt = self._viz_index + 1
+        self._viz_index = nxt if nxt < NUM_VIZ else -1
+        overlay = self.query_one(VisualizationOverlay)
+        visible = self._viz_index >= 0
+        if visible:
+            self._close_lyrics()
+            self._close_airplay()
+            overlay.show_viz(self._viz_index)
+            overlay._center()
+        overlay.set_class(visible, "visible")
+
+    def _close_lyrics(self) -> None:
+        """Hide the lyrics overlay if open."""
         if self._lyrics_visible:
             self._lyrics_visible = False
             self.query_one(LyricsOverlay).remove_class("visible")
+
+    def _close_airplay(self) -> None:
+        """Collapse the AirPlay picker if expanded."""
         picker = self.query_one(AirPlayPicker)
         if picker.expanded:
             picker.expanded = False
+
+    def _close_visualization(self) -> None:
+        """Hide the visualization overlay if open."""
+        if self._viz_index >= 0:
+            self._viz_index = -1
+            self.query_one(VisualizationOverlay).remove_class("visible")
+
+    def action_close_overlay(self) -> None:
+        self._close_lyrics()
+        self._close_airplay()
+        self._close_visualization()
 
     async def _load_lyrics(self) -> None:
         state = self._last_state
@@ -613,9 +670,8 @@ class AppleMusicApp(App):
             self._lyrics_loading = False
 
     async def on_air_play_picker_picker_opened(self, message: AirPlayPicker.PickerOpened) -> None:
-        if self._lyrics_visible:
-            self._lyrics_visible = False
-            self.query_one(LyricsOverlay).remove_class("visible")
+        self._close_lyrics()
+        self._close_visualization()
         devices = await self.client.get_airplay_devices()
         self.query_one(AirPlayPicker).devices = devices
 

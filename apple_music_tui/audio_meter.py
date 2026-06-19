@@ -64,6 +64,24 @@ try:
 except ImportError:
     _SCK_AVAILABLE = False
 
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Spectrum / ring-buffer configuration
+# ---------------------------------------------------------------------------
+
+FFT_SIZE = 2048            # samples per FFT window (~43 ms @ 48 kHz, 23 Hz bins)
+RING_CAPACITY = 8192       # ~4x the FFT window, absorbs variable SCK buffer sizes
+SPECTRUM_FMIN = 20.0       # lowest band edge (Hz)
+SPECTRUM_FMAX = 16000.0    # highest band edge (Hz)
+SPECTRUM_DB_FLOOR = -70.0  # dBFS mapped to band value 0.0
+SPECTRUM_DB_CEIL = -10.0   # dBFS mapped to band value 1.0
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -91,6 +109,79 @@ class AudioMeterPermissionError(AudioMeterError):
 
 
 # ---------------------------------------------------------------------------
+# Ring buffer (raw samples for FFT)
+# ---------------------------------------------------------------------------
+
+class _RingBuffer:
+    """Per-channel float ring buffer.
+
+    Single-writer (the real-time audio callback, via :meth:`push`) and
+    single-reader (the UI consumer thread, via :meth:`snapshot`).  A single
+    lock guards both; the writer's critical section is just index assignments
+    so it never blocks the audio thread meaningfully.
+    """
+
+    def __init__(self, capacity: int, channels: int = 2) -> None:
+        self._cap = capacity
+        self._chan = channels
+        self._buf = [[0.0] * capacity for _ in range(channels)]
+        self._write = 0
+        self._filled = 0
+        self._lock = threading.Lock()
+
+    def push(self, channels) -> None:
+        """Append per-channel samples.
+
+        ``channels[c]`` is a sequence of float samples for channel ``c``.  All
+        channels advance by the same count (the shortest channel's length);
+        channel 0 is duplicated when a channel is missing (mono input).
+        """
+        if not channels:
+            return
+        n = min(len(ch) for ch in channels)
+        if not n:
+            return
+        with self._lock:
+            cap = self._cap
+            w = self._write
+            first = min(n, cap - w)  # samples before wrapping
+            for c in range(self._chan):
+                src = channels[c] if c < len(channels) else channels[0]
+                buf = self._buf[c]
+                buf[w:w + first] = src[:first]
+                if n > first:
+                    buf[:n - first] = src[first:n]
+            self._write = (w + n) % cap
+            self._filled = min(cap, self._filled + n)
+
+    def snapshot(self, n: int):
+        """Return the most recent *n* samples per channel in time order.
+
+        Returns a list of per-channel lists, or ``None`` if fewer than *n*
+        samples have been buffered.
+        """
+        with self._lock:
+            if self._filled < n:
+                return None
+            start = (self._write - n) % self._cap
+            out = []
+            for c in range(self._chan):
+                buf = self._buf[c]
+                if start + n <= self._cap:
+                    out.append(buf[start:start + n])
+                else:
+                    tail = self._cap - start
+                    out.append(buf[start:] + buf[:n - tail])
+            return out
+
+    def reset(self) -> None:
+        """Drop buffered samples so the next snapshot returns ``None``."""
+        with self._lock:
+            self._write = 0
+            self._filled = 0
+
+
+# ---------------------------------------------------------------------------
 # SCStreamOutput delegate (monitor mode)
 # Defined at module level — PyObjC needs to register it as an ObjC class.
 # ---------------------------------------------------------------------------
@@ -111,6 +202,7 @@ if _PYOBJC_AVAILABLE and _SCK_AVAILABLE:
                 return None
             self._levels: list[float] = [0.0, 0.0]
             self._lock = threading.Lock()
+            self._ring = _RingBuffer(RING_CAPACITY, 2)
             return self
 
         def stream_didOutputSampleBuffer_ofType_(self, stream, sample_buf, type_):
@@ -144,6 +236,8 @@ if _PYOBJC_AVAILABLE and _SCK_AVAILABLE:
                 with self._lock:
                     self._levels[0] = rms[0]
                     self._levels[1] = rms[1]
+                # Stash raw samples for the consumer-side FFT spectrum.
+                self._ring.push([left, right])
             except Exception:
                 pass  # never raise from a Core Audio / SCK callback thread
 
@@ -176,6 +270,16 @@ class AudioMeter:
     def __init__(self) -> None:
         self._levels: list[float] = [0.0, 0.0]
         self._lock = threading.Lock()
+
+        # Raw-sample ring for the FFT spectrum (playback mode; monitor mode
+        # uses the delegate's own ring).  Sample rate is set at start().
+        self._ring = _RingBuffer(RING_CAPACITY, 2)
+        self._sample_rate: int = 48000
+
+        # Cached FFT tables, rebuilt when (FFT_SIZE, num_bands, rate) changes.
+        self._window = None
+        self._band_bins = None
+        self._spec_cache_key: tuple | None = None
 
         # Playback-mode state
         self._file = None        # AVAudioFile
@@ -227,6 +331,7 @@ class AudioMeter:
         with self._lock:
             self._levels[0] = 0.0
             self._levels[1] = 0.0
+        self._ring.reset()
 
     @property
     def levels(self) -> Tuple[float, float]:
@@ -236,6 +341,57 @@ class AudioMeter:
                 return (self._delegate._levels[0], self._delegate._levels[1])
         with self._lock:
             return (self._levels[0], self._levels[1])
+
+    def spectrum(
+        self, num_bands: int = 24, sample_rate: int | None = None
+    ) -> Tuple[list[float], list[float]]:
+        """Instantaneous log-spaced magnitude spectrum per channel.
+
+        Returns ``(left_bands, right_bands)``, each a list of ``num_bands``
+        floats in ``[0.0, 1.0]``.  Computed on the calling (consumer) thread —
+        never call this from an audio callback.  Returns zeros if numpy is
+        unavailable or the ring has not yet buffered a full FFT window.
+        """
+        if not _NUMPY_AVAILABLE:
+            return ([0.0] * num_bands, [0.0] * num_bands)
+        ring = self._delegate._ring if self._delegate is not None else self._ring
+        snap = ring.snapshot(FFT_SIZE)
+        if snap is None:
+            return ([0.0] * num_bands, [0.0] * num_bands)
+        window, edges = self._spectrum_tables(num_bands, sample_rate or self._sample_rate)
+        left = self._channel_bands(snap[0], window, edges)
+        right = self._channel_bands(snap[1] if len(snap) > 1 else snap[0], window, edges)
+        return (left, right)
+
+    def _spectrum_tables(self, num_bands: int, sr: int):
+        """Return cached (Hann window, log-spaced band->bin edges) for *sr*."""
+        key = (FFT_SIZE, num_bands, sr)
+        if self._spec_cache_key != key:
+            self._window = np.hanning(FFT_SIZE)
+            edges_hz = np.logspace(
+                math.log10(SPECTRUM_FMIN),
+                math.log10(min(SPECTRUM_FMAX, sr / 2.0)),
+                num_bands + 1,
+            )
+            bins = np.round(edges_hz * FFT_SIZE / sr).astype(int)
+            self._band_bins = np.clip(bins, 0, FFT_SIZE // 2)
+            self._spec_cache_key = key
+        return self._window, self._band_bins
+
+    def _channel_bands(self, samples, window, edges) -> list[float]:
+        """FFT one channel's samples into ``len(edges)-1`` normalized bands."""
+        x = np.asarray(samples, dtype=np.float64) * window
+        # Coherent-gain normalization: a full-scale sine peaks near 1.0 (0 dBFS).
+        mag = np.abs(np.fft.rfft(x)) / (window.sum() * 0.5)
+        bands: list[float] = []
+        for i in range(len(edges) - 1):
+            lo = int(edges[i])
+            hi = max(int(edges[i + 1]), lo + 1)
+            peak = float(mag[lo:hi].max())
+            db = 20.0 * math.log10(peak + 1e-12)
+            val = (db - SPECTRUM_DB_FLOOR) / (SPECTRUM_DB_CEIL - SPECTRUM_DB_FLOOR)
+            bands.append(min(1.0, max(0.0, val)))
+        return bands
 
     # ------------------------------------------------------------------
     # Context manager
@@ -326,6 +482,7 @@ class AudioMeter:
 
         self._stream = stream
         self._delegate = delegate
+        self._sample_rate = 48000
 
     def _stop_monitor(self) -> None:
         if self._stream is None:
@@ -359,6 +516,10 @@ class AudioMeter:
         tap_fmt = mixer.outputFormatForBus_(0)
         if tap_fmt is None or tap_fmt.sampleRate() == 0:
             tap_fmt = None
+        else:
+            # The tap delivers buffers in the mixer's output format, so the
+            # spectrum must bin against that rate (not the source file's).
+            self._sample_rate = int(tap_fmt.sampleRate())
 
         self._tap_block = self._make_tap_block()
         mixer.installTapOnBus_bufferSize_format_block_(0, 4096, tap_fmt, self._tap_block)
@@ -396,6 +557,7 @@ class AudioMeter:
         """
         lock = self._lock
         levels = self._levels
+        ring = self._ring
 
         def _tap(buffer, when) -> None:  # noqa: ARG001
             try:
@@ -408,9 +570,11 @@ class AudioMeter:
                 if fcd is None:
                     return
                 results: list[float] = []
+                chan_samples: list[list[float]] = []
                 for ch_data in fcd:
-                    ss = sum(ch_data[i] ** 2 for i in range(n))
-                    results.append(_rms(ss, n))
+                    samples = [ch_data[i] for i in range(n)]
+                    results.append(_rms(sum(v * v for v in samples), n))
+                    chan_samples.append(samples)
                     if len(results) >= 2:
                         break
                 if len(results) == 1:
@@ -420,6 +584,9 @@ class AudioMeter:
                 with lock:
                     levels[0] = results[0]
                     levels[1] = results[1]
+                # Stash raw samples for the consumer-side FFT spectrum.
+                if chan_samples:
+                    ring.push(chan_samples)
             except Exception:
                 pass  # never raise from a Core Audio callback thread
 
