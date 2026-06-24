@@ -364,7 +364,14 @@ class AudioMeter:
         return (left, right)
 
     def _spectrum_tables(self, num_bands: int, sr: int):
-        """Return cached (Hann window, log-spaced band->bin edges) for *sr*."""
+        """Return cached (Hann window, log-spaced band edges in fractional bins).
+
+        Edges are kept as floats, *not* rounded to integer bin indices.  At low
+        frequencies the log-spaced bands are narrower than one FFT bin
+        (~23 Hz at FFT_SIZE=2048 / 48 kHz), so rounding collapses several
+        adjacent bands onto the same bin and they move in lockstep.
+        ``_channel_bands`` interpolates those sub-bin bands instead.
+        """
         key = (FFT_SIZE, num_bands, sr)
         if self._spec_cache_key != key:
             self._window = np.hanning(FFT_SIZE)
@@ -373,21 +380,41 @@ class AudioMeter:
                 math.log10(min(SPECTRUM_FMAX, sr / 2.0)),
                 num_bands + 1,
             )
-            bins = np.round(edges_hz * FFT_SIZE / sr).astype(int)
-            self._band_bins = np.clip(bins, 0, FFT_SIZE // 2)
+            edges = edges_hz * FFT_SIZE / sr
+            self._band_bins = np.clip(edges, 0.0, float(FFT_SIZE // 2))
             self._spec_cache_key = key
         return self._window, self._band_bins
 
     def _channel_bands(self, samples, window, edges) -> list[float]:
-        """FFT one channel's samples into ``len(edges)-1`` normalized bands."""
+        """FFT one channel's samples into ``len(edges)-1`` normalized bands.
+
+        ``edges`` are fractional bin positions.  A band spanning at least one
+        whole bin is peak-picked (captures tonal peaks); a sub-bin band is
+        interpolated at its center so adjacent narrow low-frequency bands get
+        distinct values instead of collapsing onto a single shared FFT bin.
+        """
         x = np.asarray(samples, dtype=np.float64) * window
         # Coherent-gain normalization: a full-scale sine peaks near 1.0 (0 dBFS).
         mag = np.abs(np.fft.rfft(x)) / (window.sum() * 0.5)
+        rounded = np.round(edges).astype(int)  # nearest bin per edge, vectorized
+        last = mag.size - 1
         bands: list[float] = []
         for i in range(len(edges) - 1):
-            lo = int(edges[i])
-            hi = max(int(edges[i + 1]), lo + 1)
-            peak = float(mag[lo:hi].max())
+            rlo = int(rounded[i])
+            rhi = int(rounded[i + 1])
+            if rhi > rlo:
+                # Band spans >= 1 whole bin: peak-pick (captures tonal peaks).
+                # Bins [rlo, rhi) — contiguous and non-overlapping with neighbors.
+                peak = float(mag[rlo:rhi].max())
+            else:
+                # Sub-bin band: both edges round to the same bin, so peak-picking
+                # would tie adjacent narrow bands to one shared value (the
+                # lockstep seen at low frequencies).  Linearly interpolate the
+                # magnitude at the band center for a distinct value instead.
+                center = 0.5 * (edges[i] + edges[i + 1])
+                i0 = int(center)
+                frac = center - i0
+                peak = float(mag[i0] * (1.0 - frac) + mag[min(i0 + 1, last)] * frac)
             db = 20.0 * math.log10(peak + 1e-12)
             val = (db - SPECTRUM_DB_FLOOR) / (SPECTRUM_DB_CEIL - SPECTRUM_DB_FLOOR)
             bands.append(min(1.0, max(0.0, val)))
