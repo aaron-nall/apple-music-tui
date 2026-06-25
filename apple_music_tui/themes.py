@@ -22,7 +22,7 @@ amber_terminal = Theme(
         "scrollbar-corner-color": "#1F0D00",
         "text-muted": "#CC8800",
         "text-disabled": "#7A4F00",
-        "block-hover-background": "#0A0400",
+        "block-hover-background": "#2E1C06",
     },
 )
 
@@ -48,9 +48,7 @@ green_terminal = Theme(
         "scrollbar-corner-color": "#001A00",
         "text-muted": "#00CC00",
         "text-disabled": "#006600",
-        "block-cursor-foreground": "#001200",
-        "block-cursor-blurred-foreground": "#33FF33",
-        "block-hover-background": "#000A00",
+        "block-hover-background": "#0A2C0A",
     },
 )
 

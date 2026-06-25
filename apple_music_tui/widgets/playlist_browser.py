@@ -42,11 +42,15 @@ class PlaylistBrowser(Widget):
         background: transparent;
         padding: 0 1;
     }
-    PlaylistBrowser > ListView > ListItem.--highlight {
+    PlaylistBrowser > ListView > ListItem.-highlight {
         background: $accent 15%;
+        color: $foreground;
+        text-style: none;
     }
-    PlaylistBrowser > ListView:focus > ListItem.--highlight {
+    PlaylistBrowser > ListView:focus > ListItem.-highlight {
         background: $accent 30%;
+        color: $foreground;
+        text-style: none;
     }
     PlaylistBrowser > ListView > ListItem.playing-track {
         background: $accent 40%;
