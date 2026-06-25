@@ -58,7 +58,7 @@ class VUMeter(Widget):
             self.refresh()
 
     def render(self) -> Text:
-        colors = meter_colors(self.app.theme)
+        colors = meter_colors(self.app)
         left, right = self._levels
         t = _bar(left, colors)
         t.append(" ")

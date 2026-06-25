@@ -171,7 +171,7 @@ class VisualizationOverlay(CenteredOverlay, Widget):
             style="dim",
         )
 
-        colors = meter_colors(self.app.theme)
+        colors = meter_colors(self.app)
         n = self._bands_needed()
         left = self._fit(self._sm_l, n)
         right = self._fit(self._sm_r, n)
