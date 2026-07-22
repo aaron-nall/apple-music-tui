@@ -25,30 +25,45 @@ _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF = 0.5
 
 
-def _request_json(url: str, timeout: float):
-    """GET `url` and return parsed JSON, retrying on transient network errors.
+class TransientLyricsError(Exception):
+    """lrclib.net was unreachable or returned a server error.
 
-    HTTP error responses (e.g. 404) are not retried — lrclib uses 404 to mean
-    "no match," and a fallback query is the right next step.
+    Distinct from a definitive "no match" (HTTP 404 -> None): callers use this
+    to avoid caching a temporary outage as a permanent miss.
+    """
+
+
+def _request_json(url: str, timeout: float):
+    """GET `url` and return parsed JSON.
+
+    Returns None for a definitive "no match" (HTTP 4xx -- lrclib uses 404 to
+    mean "no lyrics found," so a fallback query is the right next step).
+
+    Raises TransientLyricsError when the server can't be reached or is erroring
+    (timeouts, connection failures, 5xx, malformed responses), after retrying,
+    so the caller doesn't cache the outage as a permanent miss.
     """
     req = Request(url, headers=_HEADERS)
+    last_exc: Exception | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             with urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode())
         except HTTPError as exc:
-            _log.debug("lrclib.net HTTP %s for %s", exc.code, url)
-            return None
-        except (URLError, TimeoutError, OSError) as exc:
-            if attempt == _MAX_ATTEMPTS:
-                _log.debug("lrclib.net request gave up after %d attempts: %s", attempt, exc)
+            if exc.code < 500:
+                _log.debug("lrclib.net HTTP %s for %s", exc.code, url)
                 return None
-            _log.debug("lrclib.net request failed (attempt %d/%d): %s", attempt, _MAX_ATTEMPTS, exc)
+            # 5xx is a server-side hiccup, not a "no match" -- retry.
+            last_exc = exc
+        except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_exc = exc
+        if attempt < _MAX_ATTEMPTS:
+            _log.debug(
+                "lrclib.net request failed (attempt %d/%d): %s", attempt, _MAX_ATTEMPTS, last_exc
+            )
             time.sleep(_RETRY_BACKOFF * attempt)
-        except json.JSONDecodeError as exc:
-            _log.debug("lrclib.net returned invalid JSON: %s", exc)
-            return None
-    return None
+    _log.debug("lrclib.net unreachable after %d attempts: %s", _MAX_ATTEMPTS, last_exc)
+    raise TransientLyricsError(str(last_exc))
 
 # Parenthetical suffixes Apple Music adds that lrclib typically doesn't have.
 _STRIP_SUFFIXES_RE = re.compile(
@@ -131,6 +146,10 @@ def fetch_lyrics(track: str, artist: str, album: str, duration: float) -> dict:
     Tries an exact match first, then falls back to a search query which
     tolerates slight metadata differences between Apple Music and lrclib.
     Strips common Apple Music suffixes like (Remastered) before retrying.
+
+    Returns _EMPTY when lrclib confirms it has no lyrics for the track. Raises
+    TransientLyricsError if the service is unreachable, so the caller can retry
+    later instead of caching the failure as a permanent miss.
     """
     result = _get_exact(track, artist, album, duration)
     if result:

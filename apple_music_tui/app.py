@@ -15,7 +15,8 @@ from apple_music_tui.audio_meter import AudioMeter, AudioMeterError
 from apple_music_tui.config import load_config
 from apple_music_tui.library_cache import LibraryCache
 from apple_music_tui.lyrics import (
-    GAP_SENTINEL, fetch_lyrics, find_current_line, insert_gap_lines, parse_lrc,
+    GAP_SENTINEL, TransientLyricsError, fetch_lyrics, find_current_line,
+    insert_gap_lines, parse_lrc,
 )
 from apple_music_tui.music_client import MusicClient, MusicState
 from apple_music_tui.themes import CUSTOM_THEMES
@@ -595,6 +596,19 @@ class AppleMusicApp(App):
         self._close_airplay()
         self._close_visualization()
 
+    def _reset_lyrics_state(self) -> None:
+        """Clear parsed-lyrics state so stale lines aren't used after a miss or error."""
+        self._parsed_lyrics = None
+        self._lyrics_synced = False
+        self._gap_lines = set()
+        self._gap_end_times = {}
+        self._last_gap_bold_count = -1
+
+    async def _show_no_lyrics(self, overlay: LyricsOverlay, track: str, artist: str) -> None:
+        """Reset lyrics state and display the 'no lyrics' placeholder."""
+        self._reset_lyrics_state()
+        await overlay.show_no_lyrics(track, artist)
+
     async def _load_lyrics(self) -> None:
         state = self._last_state
         if not state or not state["track"]:
@@ -647,25 +661,21 @@ class AppleMusicApp(App):
                 lines = ["" if text == GAP_SENTINEL else text for _, text in self._parsed_lyrics]
             elif plain:
                 lines = plain.splitlines()
-                self._parsed_lyrics = None
-                self._lyrics_synced = False
-                self._gap_lines = set()
-                self._gap_end_times = {}
-                self._last_gap_bold_count = -1
+                self._reset_lyrics_state()
             else:
-                await overlay.show_no_lyrics(track, artist)
-                self._parsed_lyrics = None
-                self._lyrics_synced = False
-                self._gap_lines = set()
-                self._gap_end_times = {}
-                self._last_gap_bold_count = -1
+                await self._show_no_lyrics(overlay, track, artist)
                 return
 
             await overlay.set_lyrics(track, artist, lines, gap_indices=self._gap_lines)
             self._lyrics_current_line = -1
+        except TransientLyricsError:
+            # lrclib is unreachable -- show nothing for now, but don't cache the
+            # outage as a miss so lyrics reappear once the service recovers.
+            _log.info("lrclib.net unavailable; skipping cache for %r / %r", track, artist)
+            await self._show_no_lyrics(overlay, track, artist)
         except Exception:
             _log.exception("Failed to load lyrics for %r / %r", track, artist)
-            await overlay.show_no_lyrics(track, artist)
+            await self._show_no_lyrics(overlay, track, artist)
         finally:
             self._lyrics_loading = False
 
