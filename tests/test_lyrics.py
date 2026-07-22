@@ -1,11 +1,14 @@
 """Tests for lyrics fetching, LRC parsing, and gap detection."""
 from __future__ import annotations
 
+from urllib.error import HTTPError, URLError
+
 import pytest
 
 from apple_music_tui import lyrics as lyrics_mod
 from apple_music_tui.lyrics import (
     GAP_SENTINEL,
+    TransientLyricsError,
     _normalize,
     fetch_lyrics,
     find_current_line,
@@ -131,3 +134,46 @@ class TestFetchLyrics:
         monkeypatch.setattr(lyrics_mod, "_request_json", lambda url, timeout: None)
         result = fetch_lyrics("Song", "Artist", "Album", 180)
         assert result == {"synced_lyrics": None, "plain_lyrics": None}
+
+    def test_transient_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(url: str, timeout: float):
+            raise TransientLyricsError("lrclib down")
+
+        monkeypatch.setattr(lyrics_mod, "_request_json", boom)
+        with pytest.raises(TransientLyricsError):
+            fetch_lyrics("Song", "Artist", "Album", 180)
+
+
+class TestRequestJson:
+    """A definitive miss (4xx) must be distinguishable from a transient outage."""
+
+    def test_4xx_is_definitive_miss(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def raise_404(req, timeout):
+            raise HTTPError("https://lrclib.net", 404, "Not Found", {}, None)
+
+        monkeypatch.setattr(lyrics_mod, "urlopen", raise_404)
+        assert lyrics_mod._request_json("https://lrclib.net/api/get?x", 1.0) is None
+
+    def test_5xx_retries_then_raises_transient(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[int] = []
+
+        def raise_502(req, timeout):
+            calls.append(1)
+            raise HTTPError("https://lrclib.net", 502, "Bad Gateway", {}, None)
+
+        monkeypatch.setattr(lyrics_mod, "urlopen", raise_502)
+        monkeypatch.setattr(lyrics_mod.time, "sleep", lambda _s: None)
+        with pytest.raises(TransientLyricsError):
+            lyrics_mod._request_json("https://lrclib.net/api/get?x", 1.0)
+        assert len(calls) == lyrics_mod._MAX_ATTEMPTS
+
+    def test_network_error_retries_then_raises_transient(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_urlerror(req, timeout):
+            raise URLError("connection refused")
+
+        monkeypatch.setattr(lyrics_mod, "urlopen", raise_urlerror)
+        monkeypatch.setattr(lyrics_mod.time, "sleep", lambda _s: None)
+        with pytest.raises(TransientLyricsError):
+            lyrics_mod._request_json("https://lrclib.net/api/get?x", 1.0)
